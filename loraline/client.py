@@ -32,11 +32,18 @@ class Client:
             if note:
                 self.notes.append(note)
             idle = 3600.0 / self.session.heartbeat_s * cost
-            self.notes.append(
-                f"Idle cost: {idle / 1000:.0f} s of airtime per hour"
-                + (f" ({idle / 36000:.2f}% duty)" if link.budget.limit_percent > 0 else "")
-                + "."
-            )
+            allowance = link.budget.allowance_ms()
+            if allowance > 0:
+                self.notes.append(
+                    f"Just sitting here costs {idle / 1000:.0f} seconds of radio "
+                    f"time an hour, out of the {allowance / 1000:.0f} you are "
+                    f"allowed. The rest is yours to talk with."
+                )
+            else:
+                self.notes.append(
+                    f"Just sitting here costs {idle / 1000:.0f} seconds of radio "
+                    f"time an hour. There is no hourly limit on this band."
+                )
 
     def pump(self, now: float | None = None) -> list[Event]:
         now = now if now is not None else time.time()
@@ -82,13 +89,18 @@ class Client:
         time.sleep(0.4)
 
     def status_summary(self, now: float, convo: str = GROUP) -> str:
-        if self.keyring.can_encrypt_to(convo):
-            lock = "e2e" if convo != GROUP else "group key"
+        if not self.keyring.can_encrypt_to(convo):
+            lock = "NOT ENCRYPTED"
+        elif convo == GROUP:
+            lock = "encrypted for the group"
         else:
-            lock = "CLEAR"
-        bits = [self.link.status(),
-                f"unconfirmed {self.session.unconfirmed_count()}"]
+            lock = "encrypted, just you two"
+
+        bits = [self.link.status()]
+        waiting = self.session.unconfirmed_count()
+        if waiting:
+            bits.append(f"{waiting} waiting")
         if len(self.link.interfaces) > 1:
-            bits.append(f"relayed {self.link.forwarded}")
+            bits.append(f"{self.link.forwarded} passed on")
         bits.append(lock)
         return "   ".join(bits)

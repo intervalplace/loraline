@@ -252,8 +252,8 @@ class Session:
             peer.known_key = True
             self.conversation(peer.address).title = peer.label
             return [SystemEvent(
-                f"Key exchanged with {peer.label} ({peer.address}). "
-                f"Direct messages to them are now end-to-end encrypted."
+                f"{peer.label}'s key arrived. Private messages with "
+                f"{peer.label} can now be read by nobody else."
             )]
         peer.known_key = peer.known_key or self.keyring.knows(peer.address)
         return [PresenceEvent()]
@@ -362,9 +362,12 @@ class Session:
                 peer.status = Status.OFFLINE
                 peer.last_seen = None
                 peer.rssi_dbm = None
+                quiet = self.peer_timeout_s
+                spell = (f"{quiet / 60:.0f} minutes" if quiet >= 90
+                         else f"{quiet:.0f} seconds")
                 events.append(SystemEvent(
-                    f"{peer.label} appears to have gone offline "
-                    f"(no heartbeat for {int(self.peer_timeout_s)}s)."
+                    f"{peer.label} has gone offline. Their radio has said "
+                    f"nothing for {spell}."
                 ))
 
         if self.status is Status.ONLINE and now - self.last_keystroke > IDLE_TO_AWAY_S:
@@ -412,7 +415,8 @@ class Session:
         if not self.keyring.can_encrypt_to(target):
             label = "the group" if target == GROUP else self.conversation(target).title
             warn.append(SystemEvent(
-                f"Sent to {label} in the clear: no key available.",
+                f"That went out unencrypted, because there is no key for "
+                f"{label} yet. Anyone in range could read it.",
                 level="warn", convo=target,
             ))
         return [event, DeliveryEvent(self.seq), *warn]
@@ -470,10 +474,10 @@ class Session:
         self.heartbeat_s = needed
         self.peer_timeout_s = needed * 2.6
         return (
-            f"Presence slowed to one heartbeat every {needed / 60:.1f} min so "
-            f"it fits the duty cycle. Someone leaving will take up to "
-            f"{self.peer_timeout_s / 60:.0f} min to show as offline. "
-            f"A lower spreading factor would fix this."
+            f"This setup only has room to check in every {needed / 60:.1f} "
+            f"minutes, so someone leaving may take up to "
+            f"{self.peer_timeout_s / 60:.0f} minutes to show as offline. "
+            f"A shorter range setting would make that quicker."
         )
 
     def announce(self) -> None:

@@ -189,10 +189,11 @@ class LoRaInterface(Interface):
         return cost
 
     def status(self) -> str:
+        mhz = mhz_for_channel(self.config.channel)
         remaining = self.budget.remaining_ms()
-        left = "unlimited" if remaining == float("inf") else f"{remaining / 1000:.0f}s"
-        return (f"SF{self.config.sf} @ {mhz_for_channel(self.config.channel)} MHz  "
-                f"airtime {self.budget.used_percent():.2f}%  budget {left}")
+        if remaining == float("inf"):
+            return f"{mhz} MHz   no hourly limit here"
+        return f"{mhz} MHz   {remaining / 1000:.0f}s of radio time left this hour"
 
 
 class _SocketBearer(Interface):
@@ -294,7 +295,8 @@ class TCPServerInterface(_SocketBearer):
                 pass
 
     def status(self) -> str:
-        return f"tcp :{self.port} ({self.connections} connected)"
+        n = self.connections
+        return f"{n} joined over the internet" if n else "nobody joined yet"
 
 
 class TCPClientInterface(_SocketBearer):
@@ -321,8 +323,7 @@ class TCPClientInterface(_SocketBearer):
             time.sleep(self.retry_s)
 
     def status(self) -> str:
-        state = "up" if self.connections else "down"
-        return f"tcp {self.host}:{self.port} ({state})"
+        return ("connected to " if self.connections else "trying to reach ") + self.host
 
 
 class Link:
