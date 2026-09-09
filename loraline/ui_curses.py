@@ -61,14 +61,18 @@ HELP = [
 ]
 
 
+def unicode_ok() -> bool:
+    encoding = (locale.getpreferredencoding(False) or "").lower()
+    return "utf" in encoding
+
+
 def logo() -> str:
     """The mark, in box-drawing diagonals: two up-chirps and a down-chirp.
 
     Falls back to ASCII where the terminal is not on a UTF-8 locale, which is
     the closest thing to a reliable test for whether those glyphs will draw.
     """
-    encoding = (locale.getpreferredencoding(False) or "").lower()
-    return "\u2571\u2571\u2572" if "utf" in encoding else "//\\"
+    return "\u2571\u2571\u2572" if unicode_ok() else "//\\"
 
 
 def emote(text: str) -> str:
@@ -318,7 +322,10 @@ class CursesUI:
                 [(f"signal {proto.signal_bars(focus.rssi_dbm)}"
                   + (f"  {focus.rssi_dbm} dBm" if focus.rssi_dbm is not None else ""),
                   "muted")],
-                [(proto.sparkline(focus.rssi_history, SIDEBAR_W - 2), "rule")],
+                [(proto.sparkline(
+                    focus.rssi_history, SIDEBAR_W - 2,
+                    proto.SPARK_BLOCKS if unicode_ok() else proto.SPARK_ASCII,
+                 ), "rule")],
                 [(f"last heard {s.last_seen_text(focus, now)}", "muted")],
             ]
         if s.queued_count():

@@ -312,11 +312,19 @@ def signal_bars(dbm: int | None) -> str:
     return "...."
 
 
-SPARK = " .:-=+*#"
+SPARK_BLOCKS = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+SPARK_ASCII = " .:-=+*#"
+SPARK = SPARK_ASCII      # kept for callers that cannot rely on Unicode
 
 
-def sparkline(values: list[int | None], width: int = 20) -> str:
-    """Render recent RSSI history as a single line of characters."""
+def sparkline(values: list[int | None], width: int = 20,
+              ramp: str = SPARK_BLOCKS) -> str:
+    """Recent signal history as one line, oldest on the left.
+
+    Block characters by default, because a strip of punctuation reads as line
+    noise rather than as a graph. Callers on a non-UTF-8 terminal should pass
+    SPARK_ASCII instead.
+    """
     recent = values[-width:]
     if not recent:
         return ""
@@ -324,15 +332,15 @@ def sparkline(values: list[int | None], width: int = 20) -> str:
     if not real:
         return " " * len(recent)
     lo, hi = min(real), max(real)
-    mid = len(SPARK) // 2
+    mid = len(ramp) // 2
     out = []
     for v in recent:
         if v is None:
             out.append(" ")
         elif hi == lo:
-            out.append(SPARK[mid])  # a flat link is steady, not absent
+            out.append(ramp[mid])   # a flat link is steady, not absent
         else:
-            out.append(SPARK[int((v - lo) / (hi - lo) * (len(SPARK) - 1))])
+            out.append(ramp[int((v - lo) / (hi - lo) * (len(ramp) - 1))])
     return "".join(out)
 
 
