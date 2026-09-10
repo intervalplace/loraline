@@ -347,6 +347,14 @@ class Session:
                 continue     # the mark jumped OVER this one; it was not received
             if not seq_newer(item.seq, ack):     # item.seq <= ack
                 item.confirmed.add(from_addr)
+                # A late-arriving frame can confirm a message we had marked
+                # lost for this peer: the ack now covers it and it is no longer
+                # in the peer's hole list. Clear the stale loss and let the
+                # state recompute, so a cross can turn back into a tick.
+                if from_addr in item.lost:
+                    item.lost.discard(from_addr)
+                    if item.state is Delivery.FAILED:
+                        item.state = Delivery.SENT   # let resolve() lift it
                 item.state = item.resolve()
                 events.append(DeliveryEvent(item.seq))
         return events
@@ -431,6 +439,15 @@ class Session:
         """
         seen = self._received.setdefault(key, set())
         seen.add(seq)
+        # A frame we had already given up on has arrived late (radio reorder or
+        # a retransmit that finally made it). Retract the loss so we stop
+        # reporting it as dropped; the sender can then clear its cross too.
+        lost = self._lost.get(key)
+        if lost and seq in lost:
+            lost.discard(seq)
+            if not lost:
+                self._lost.pop(key, None)
+            self._force_heartbeat = True   # tell the sender to un-cross it
         mark = self.acks.get(key, 0)
         while ((mark + 1) % proto.SEQ_MODULO) in seen:
             mark = (mark + 1) % proto.SEQ_MODULO
