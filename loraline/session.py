@@ -17,7 +17,7 @@ clients are being polite about it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Union
 
 from . import protocol as proto
 from .crypto import GROUP, Identity, Keyring
@@ -77,7 +77,11 @@ class PresenceEvent:
     pass
 
 
-Event = MessageEvent | SystemEvent | DeliveryEvent | AppEvent | PresenceEvent
+# Written as a typing.Union rather than `A | B`, which is a runtime
+# expression and would need Python 3.10. macOS still ships 3.9, and needing a
+# Homebrew install to plug in a radio is exactly the accidental friction this
+# project is supposed to be free of.
+Event = Union[MessageEvent, SystemEvent, DeliveryEvent, AppEvent, PresenceEvent]
 
 
 # --------------------------------------------------------------------------
