@@ -137,7 +137,8 @@ def message(src: str, dst: str, seq: int, ack: int,
 
 def presence(src: str, status: Status, acks: dict[str, int],
              nick: str | None = None, colour: int | None = None,
-             psm: str | None = None) -> Frame:
+             psm: str | None = None,
+             lost: dict[str, set[int]] | None = None) -> Frame:
     """A heartbeat. Identity fields are optional and usually omitted.
 
     Presence is the most frequent thing on the air, so it is also the most
@@ -146,7 +147,7 @@ def presence(src: str, status: Status, acks: dict[str, int],
     short form is roughly half the size; receivers keep the last values they
     were told.
     """
-    fields = [src, status.value, encode_acks(acks)]
+    fields = [src, status.value, encode_acks(acks, lost)]
     if nick is not None:
         fields += [nick, str(colour or 0), psm or ""]
     return Frame("P", fields)
@@ -171,17 +172,48 @@ def data(src: str, dst: str, app: str, payload: str) -> Frame:
     return Frame("D", [src, dst, app, payload])
 
 
-def encode_acks(acks: dict[str, int]) -> str:
-    """Per-peer high-water marks, e.g. "a1b2c3:14;d4e5f6:9"."""
-    return ";".join(f"{addr}:{seq}" for addr, seq in sorted(acks.items()))
+def encode_acks(acks: dict[str, int],
+                lost: dict[str, set[int]] | None = None) -> str:
+    """Per-peer high-water marks, optionally with abandoned (lost) seqs.
+
+    Base form is "addr:mark", e.g. "a1b2c3:14". When the receiver has given
+    up on specific sequence numbers below the mark (dropped by the radio and
+    skipped by gap recovery), they are appended after a second colon as a
+    comma list: "a1b2c3:14:5,9". This lets the sender flag exactly those
+    messages as lost instead of falsely reporting them delivered. Older
+    receivers that split on the first colon still read the mark and ignore
+    the rest, so the extension is backward compatible.
+    """
+    lost = lost or {}
+    parts = []
+    for addr, seq in sorted(acks.items()):
+        holes = sorted(lost.get(addr, ()))
+        if holes:
+            parts.append(f"{addr}:{seq}:{','.join(str(h) for h in holes)}")
+        else:
+            parts.append(f"{addr}:{seq}")
+    return ";".join(parts)
 
 
 def decode_acks(text: str) -> dict[str, int]:
+    """Just the marks, for callers that only need the high-water number."""
     out: dict[str, int] = {}
     for part in text.split(";"):
-        addr, _, seq = part.partition(":")
-        if addr and seq.lstrip("-").isdigit():
-            out[addr] = int(seq)
+        bits = part.split(":")
+        if len(bits) >= 2 and bits[0] and bits[1].lstrip("-").isdigit():
+            out[bits[0]] = int(bits[1])
+    return out
+
+
+def decode_lost(text: str) -> dict[str, set[int]]:
+    """The abandoned-seq lists, keyed by peer address. Empty when absent."""
+    out: dict[str, set[int]] = {}
+    for part in text.split(";"):
+        bits = part.split(":")
+        if len(bits) >= 3 and bits[0]:
+            holes = {int(h) for h in bits[2].split(",") if h.lstrip("-").isdigit()}
+            if holes:
+                out[bits[0]] = holes
     return out
 
 

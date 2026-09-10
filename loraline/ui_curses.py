@@ -534,7 +534,8 @@ def run(client: Client, warnings: list[str]) -> None:
         for warning in warnings:
             ui.system(warning, level="warn")
         ui.system("A tick after your message means it went out. Two means it "
-                  "arrived. A dot means it is still waiting.")
+                  "arrived. A dot means it is still waiting. A cross means it "
+                  "was lost and nobody got it.")
         ui.system("Tab moves between conversations. Type /help for the rest.")
 
         while ui.running:

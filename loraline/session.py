@@ -23,17 +23,6 @@ from . import protocol as proto
 from .crypto import GROUP, Identity, Keyring
 from .protocol import Delivery, Frame, Status, seq_newer
 
-import os as _os
-def _trace_ack(msg: str) -> None:
-    path = _os.environ.get("LORALINE_TRACE")
-    if not path:
-        return
-    try:
-        with open(path + ".ack", "a") as _f:
-            _f.write(msg + "\n")
-    except Exception:
-        pass
-
 HEARTBEAT_S = 60.0
 PEER_TIMEOUT_S = 155.0
 IDLE_TO_AWAY_S = 300.0
@@ -41,6 +30,13 @@ TYPING_LOCKOUT_S = 5.0
 TYPING_EXPIRY_S = 12.0
 RETRY_AFTER_S = 90.0
 MAX_ATTEMPTS = 3
+# After this many newer messages arrive past a gap, treat the missing
+# sequence number as permanently lost and advance the acknowledgement mark
+# over it. Without this a single dropped radio frame jams the mark forever
+# and every later message retransmits until it hits MAX_ATTEMPTS. The sender
+# reuses a seq on retransmit, so a briefly-lost frame still has several
+# chances to arrive and fill the gap before it is skipped.
+SKIP_AFTER = 5
 HELLO_COOLDOWN_S = 20.0
 
 PALETTE = ["green", "cyan", "magenta", "yellow", "blue", "red", "white", "teal"]
@@ -107,6 +103,7 @@ class Outgoing:
     fragments: list[str]
     recipients: set[str] = field(default_factory=set)
     confirmed: set[str] = field(default_factory=set)
+    lost: set[str] = field(default_factory=set)     # recipients who reported this dropped
     state: Delivery = Delivery.QUEUED
     created: float = 0.0
     last_attempt: float = 0.0
@@ -119,6 +116,11 @@ class Outgoing:
             return Delivery.SENT
         if self.confirmed >= self.recipients:
             return Delivery.DELIVERED
+        outstanding = self.recipients - self.confirmed - self.lost
+        if not outstanding:
+            # No one left to hear from: either some got it (partial, final)
+            # or nobody did (failed).
+            return Delivery.PARTIAL if self.confirmed else Delivery.FAILED
         return Delivery.PARTIAL if self.confirmed else Delivery.SENT
 
     def tally(self) -> str:
@@ -187,6 +189,7 @@ class Session:
         self.outbox: list[Outgoing] = []
         self.acks: dict[str, int] = {}          # contiguous high-water mark per peer
         self._received: dict[str, set[int]] = {}
+        self._lost: dict[str, set[int]] = {}   # seqs abandoned by gap recovery, to report back
         self._reassembly: dict[tuple[str, int], dict] = {}
 
         self.last_keystroke = now
@@ -306,11 +309,20 @@ class Session:
             self.conversations[peer.address].title = peer.label
 
         acks_in = proto.decode_acks(frame.field_str(2))
+        lost_in = proto.decode_lost(frame.field_str(2))
         events = self._absorb_acks(
-            peer.address, acks_in.get(self.address), "group"
+            peer.address, acks_in.get(self.address), "group",
+            lost_in.get(self.address),
         )
         events += self._absorb_acks(
-            peer.address, acks_in.get(self.address + "#dm"), "dm"
+            peer.address, acks_in.get(self.address + "#dm"), "dm",
+            lost_in.get(self.address + "#dm"),
+        )
+        events += self._absorb_losses(
+            peer.address, lost_in.get(self.address), "group"
+        )
+        events += self._absorb_losses(
+            peer.address, lost_in.get(self.address + "#dm"), "dm"
         )
         if status != peer.status and not was_offline:
             events.append(SystemEvent(f"{peer.label} is now {status.label}."))
@@ -319,9 +331,11 @@ class Session:
         return events
 
     def _absorb_acks(self, from_addr: str, ack: int | None,
-                     stream: str = "group") -> list[Event]:
+                     stream: str = "group",
+                     holes: set[int] | None = None) -> list[Event]:
         if ack is None or ack < 0:
             return []
+        holes = holes or set()
         events: list[Event] = []
         for item in self.outbox:
             item_stream = "group" if item.target == GROUP else "dm"
@@ -329,10 +343,43 @@ class Session:
                 continue
             if from_addr not in item.recipients or from_addr in item.confirmed:
                 continue
+            if item.seq in holes:
+                continue     # the mark jumped OVER this one; it was not received
             if not seq_newer(item.seq, ack):     # item.seq <= ack
                 item.confirmed.add(from_addr)
                 item.state = item.resolve()
                 events.append(DeliveryEvent(item.seq))
+        return events
+
+    def _absorb_losses(self, from_addr: str, holes, stream: str = "group") -> list[Event]:
+        """Mark our own messages the peer has explicitly given up on as failed.
+
+        Gap recovery on the receiver reports the exact sequence numbers it
+        abandoned. For a group message a single peer's loss is a partial
+        failure; for a direct message that one peer is the only recipient, so
+        its loss fails the message outright. Either way the sender learns the
+        message did not land, instead of a dropped frame silently reading as
+        delivered.
+        """
+        if not holes:
+            return []
+        events: list[Event] = []
+        for item in self.outbox:
+            item_stream = "group" if item.target == GROUP else "dm"
+            if item_stream != stream or item.seq not in holes:
+                continue
+            if from_addr in item.confirmed:
+                continue          # somehow both lost and confirmed; trust the ack
+            item.lost.add(from_addr)
+            # Let resolve() decide the state now that a recipient is known to
+            # have lost it: PARTIAL if others still got it or may yet, FAILED
+            # only when nobody received it. Don't hard-set FAILED here or a
+            # message half the room received would wrongly read as lost.
+            if item.state not in (Delivery.QUEUED, Delivery.DELIVERED):
+                new_state = item.resolve()
+                if new_state != item.state:
+                    item.state = new_state
+                    events.append(DeliveryEvent(item.seq))
         return events
 
     def _on_message(self, frame: Frame, peer: Peer, now: float) -> list[Event]:
@@ -341,8 +388,6 @@ class Session:
             return []      # a direct message between two other people
 
         seq = frame.field_int(2)
-        _trace_ack(f"on_message from={peer.address} dst={dst!r} "
-                   f"seq={seq} cnt={frame.field_int(5, 1)}")
         inline_stream = "group" if dst == GROUP else "dm"
         events = self._absorb_acks(peer.address, frame.field_int(3), inline_stream)
         idx, cnt = frame.field_int(4, 0), frame.field_int(5, 1)
@@ -390,10 +435,26 @@ class Session:
         while ((mark + 1) % proto.SEQ_MODULO) in seen:
             mark = (mark + 1) % proto.SEQ_MODULO
             seen.discard(mark)
+        # Gap recovery: if messages well beyond the mark have arrived, the
+        # frame at mark+1 was dropped by the radio and is not coming, so step
+        # over it rather than jam acknowledgement permanently.
+        if seen:
+            highest = max(seen)
+            ahead = (highest - mark) % proto.SEQ_MODULO
+            while ahead > SKIP_AFTER and ahead < proto.SEQ_MODULO // 2:
+                mark = (mark + 1) % proto.SEQ_MODULO      # abandon the lost seq
+                # remember what we gave up on, but only for the group stream:
+                # a "#dm" key means a private message, whose loss is reported
+                # on that pairwise channel, not broadcast to everyone.
+                self._lost.setdefault(key, set()).add(mark)
+                while ((mark + 1) % proto.SEQ_MODULO) in seen:
+                    mark = (mark + 1) % proto.SEQ_MODULO
+                    seen.discard(mark)
+                highest = max(seen) if seen else mark
+                ahead = (highest - mark) % proto.SEQ_MODULO
         if mark != self.acks.get(key, 0):
             self.acks[key] = mark
             self._force_heartbeat = True     # get the acknowledgement moving
-        _trace_ack(f"note_received key={key!r} seq={seq} acks={dict(self.acks)}")
 
     def _deliver(self, convo_key: str, peer: Peer, seq: int, text: str,
                  now: float) -> MessageEvent:
@@ -508,10 +569,21 @@ class Session:
         self._force_heartbeat = True
         return [SystemEvent(f"Personal message set to: {self.psm or '(none)'}")]
 
+    def _lost_wire(self) -> dict[str, set[int]]:
+        """Abandoned seqs in wire form, keyed as the ack marks are.
+
+        Group losses are reported under the source peer's address; direct
+        losses under that address plus the "#dm" suffix, mirroring the ack
+        namespaces so the original sender matches them to the right outbox
+        items. Empty keys are dropped so a quiet channel adds nothing.
+        """
+        return {k: v for k, v in self._lost.items() if v}
+
     def sample_heartbeat(self) -> Frame:
         """A representative heartbeat, for costing before anything is sent."""
         return proto.presence(self.address, self.status, self.acks,
-                              self.nick, self.colour, self.psm)
+                              self.nick, self.colour, self.psm,
+                              lost=self._lost_wire())
 
     def pace_heartbeat(self, cost_ms: float, allowance_ms_per_hour: float,
                        share: float = 0.4) -> str | None:
@@ -588,7 +660,8 @@ class Session:
             full = self._identity_dirty or self.beats_sent % 10 == 0
             beat = proto.presence(
                 self.address, self.status, self.acks,
-                *( (self.nick, self.colour, self.psm) if full else () )
+                *( (self.nick, self.colour, self.psm) if full else () ),
+                lost=self._lost_wire(),
             )
             if offer(beat, GROUP):
                 self.last_heartbeat = now
