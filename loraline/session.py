@@ -205,6 +205,7 @@ class Session:
         self._pending: list[Frame] = []
         self._force_heartbeat = True
         self._send_hello = True
+        self._hello_reply_requested = False   # ask peers to hello back
 
     # -- roster ------------------------------------------------------------
 
@@ -240,9 +241,13 @@ class Session:
         peer.last_seen = now
         events: list[Event] = []
 
-        # Someone we have never met, or whose key we lack: introduce ourselves.
+        # Someone we have never met, or whose key we lack: introduce ourselves
+        # and ask them to hello back so we get their key even if an earlier
+        # exchange was half-lost.
         if (not known or not peer.known_key) and now - self.last_hello_sent > HELLO_COOLDOWN_S:
             self._send_hello = True
+            if not self.keyring.knows(src):
+                self._hello_reply_requested = True
 
         if frame.type == "H":
             events += self._on_hello(frame, peer, now)
@@ -282,15 +287,25 @@ class Session:
     def _on_hello(self, frame: Frame, peer: Peer, now: float) -> list[Event]:
         peer.nick = frame.field_str(1) or peer.nick
         peer.colour = frame.field_int(2, 1) % len(PALETTE)
-        if self.keyring.learn(peer.address, frame.field_str(3)):
+        reply_requested = frame.field_str(4) == "1"
+        learned = self.keyring.learn(peer.address, frame.field_str(3))
+        # If the peer asked us to hello back (their view of us is missing our
+        # key), oblige on the next drain. Send it plainly, without re-requesting,
+        # to avoid a request ping-pong.
+        if reply_requested:
+            self._send_hello = True
+        events: list[Event] = []
+        if learned:
             peer.known_key = True
             self.conversation(peer.address).title = peer.label
-            return [SystemEvent(
+            events.append(SystemEvent(
                 f"{peer.label}'s key arrived. Private messages with "
                 f"{peer.label} can now be read by nobody else."
-            )]
-        peer.known_key = peer.known_key or self.keyring.knows(peer.address)
-        return [PresenceEvent()]
+            ))
+        else:
+            peer.known_key = peer.known_key or self.keyring.knows(peer.address)
+            events.append(PresenceEvent())
+        return events
 
     def _on_presence(self, frame: Frame, peer: Peer, was_offline: bool,
                      now: float) -> list[Event]:
@@ -503,6 +518,20 @@ class Session:
                     f"nothing for {spell}."
                 ))
 
+        # Key exchange self-heals. If a peer is reachable but we still lack
+        # its key, our earlier hello or its reply was dropped by the radio.
+        # Re-introduce ourselves once the cooldown has elapsed, rather than
+        # waiting for a frame to arrive at just the right moment. Without this
+        # a single lost hello leaves one side unable to name or privately
+        # message the other for the whole session.
+        if (self.keyring is not None
+                and any(pe.status is not Status.OFFLINE
+                        and not self.keyring.knows(pe.address)
+                        for pe in self.peers.values())
+                and now - self.last_hello_sent > HELLO_COOLDOWN_S):
+            self._send_hello = True
+            self._hello_reply_requested = True
+
         if self.status is Status.ONLINE and now - self.last_keystroke > IDLE_TO_AWAY_S:
             self.auto_away = True
             self.status = Status.AWAY
@@ -666,9 +695,11 @@ class Session:
 
         if self._send_hello:
             beacon = proto.hello(self.address, self.nick, self.colour,
-                                 self.identity.public_b64)
+                                 self.identity.public_b64,
+                                 reply_requested=self._hello_reply_requested)
             if offer(beacon, GROUP):
                 self._send_hello = False
+                self._hello_reply_requested = False
                 self.last_hello_sent = now
 
         if self._force_heartbeat or (now - self.last_heartbeat >= self.heartbeat_s):

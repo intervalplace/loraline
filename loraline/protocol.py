@@ -126,8 +126,20 @@ class Frame:
             return default
 
 
-def hello(src: str, nick: str, colour: int, public_b64: str) -> Frame:
-    return Frame("H", [src, nick, str(colour), public_b64])
+def hello(src: str, nick: str, colour: int, public_b64: str,
+          reply_requested: bool = False) -> Frame:
+    """Introduce ourselves: address, nick, colour, public key.
+
+    reply_requested asks the recipient to send their own hello straight back.
+    A node sets it when it has heard a peer but lacks that peer's key, which
+    happens when the peer's original hello was dropped by the radio. The flag
+    is a trailing "1"; older receivers simply don't see it and a stale key
+    exchange would stay stuck, so both ends should run this version.
+    """
+    fields = [src, nick, str(colour), public_b64]
+    if reply_requested:
+        fields.append("1")
+    return Frame("H", fields)
 
 
 def message(src: str, dst: str, seq: int, ack: int,
