@@ -12,6 +12,7 @@ frame type, which lets the reader resynchronise after line noise.
     M  message    src, dst, seq, ack, idx, cnt, text
     T  typing     src, dst
     X  signing off  src
+    D  application data  src, dst, app, payload
     E  encrypted envelope, base64 of an inner frame
 
 `src` and `dst` are six-hex-character addresses derived from a public key.
@@ -159,6 +160,17 @@ def signoff(src: str) -> Frame:
     return Frame("X", [src])
 
 
+def data(src: str, dst: str, app: str, payload: str) -> Frame:
+    """A frame for something other than chat.
+
+    loraline already solves framing, sealing, fragmentation, store-and-forward
+    and delivery over a link that loses packets. An application riding on top
+    gets all of that; it only has to name itself so clients that do not know
+    the app can ignore it.
+    """
+    return Frame("D", [src, dst, app, payload])
+
+
 def encode_acks(acks: dict[str, int]) -> str:
     """Per-peer high-water marks, e.g. "a1b2c3:14;d4e5f6:9"."""
     return ";".join(f"{addr}:{seq}" for addr, seq in sorted(acks.items()))
@@ -184,7 +196,7 @@ def sanitize(text: str) -> str:
     return text.replace("+++", "+ ++")
 
 
-TYPE_CHARS = set("HMPTXE")
+TYPE_CHARS = set("HMPTXDE")
 
 
 class LineReader:

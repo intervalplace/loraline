@@ -64,11 +64,20 @@ class DeliveryEvent:
 
 
 @dataclass
+class AppEvent:
+    """Something arrived for an application other than chat."""
+    app: str
+    src: str
+    payload: str
+    convo: str
+
+
+@dataclass
 class PresenceEvent:
     pass
 
 
-Event = MessageEvent | SystemEvent | DeliveryEvent | PresenceEvent
+Event = MessageEvent | SystemEvent | DeliveryEvent | AppEvent | PresenceEvent
 
 
 # --------------------------------------------------------------------------
@@ -225,6 +234,12 @@ class Session:
         elif frame.type == "T":
             peer.typing[self._convo_for(frame.field_str(1), src)] = now + TYPING_EXPIRY_S
             events.append(PresenceEvent())
+        elif frame.type == "D":
+            dst = frame.field_str(1)
+            if dst in (GROUP, self.address):
+                events.append(AppEvent(frame.field_str(2), src,
+                                       frame.field_str(3),
+                                       self._convo_for(dst, src)))
         elif frame.type == "X":
             peer.status = Status.OFFLINE
             peer.last_seen = None
@@ -487,6 +502,11 @@ class Session:
         self._identity_dirty = True
         self.last_hello_sent = 0.0
 
+    def send_app(self, app: str, payload: str, target: str = GROUP) -> None:
+        """Queue an application frame. Rides the same link as everything else."""
+        self._pending.append(proto.data(self.address, target, app,
+                                        proto.sanitize(payload)))
+
     def sign_off(self) -> None:
         self._pending.append(proto.signoff(self.address))
 
@@ -532,7 +552,7 @@ class Session:
                 self.beats_sent += 1
 
         for frame in list(self._pending):
-            dst = frame.field_str(1, GROUP) if frame.type == "T" else GROUP
+            dst = frame.field_str(1, GROUP) if frame.type in ("T", "D") else GROUP
             if offer(frame, dst):
                 self._pending.remove(frame)
 
