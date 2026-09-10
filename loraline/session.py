@@ -171,7 +171,8 @@ class Session:
             GROUP: Conversation(GROUP, "everyone")
         }
 
-        self.seq = 0
+        self.group_seq = 0
+        self.dm_seq = 0
         self.outbox: list[Outgoing] = []
         self.acks: dict[str, int] = {}          # contiguous high-water mark per peer
         self._received: dict[str, set[int]] = {}
@@ -293,8 +294,12 @@ class Session:
         if peer.address in self.conversations:
             self.conversations[peer.address].title = peer.label
 
+        acks_in = proto.decode_acks(frame.field_str(2))
         events = self._absorb_acks(
-            peer.address, proto.decode_acks(frame.field_str(2)).get(self.address)
+            peer.address, acks_in.get(self.address), "group"
+        )
+        events += self._absorb_acks(
+            peer.address, acks_in.get(self.address + "#dm"), "dm"
         )
         if status != peer.status and not was_offline:
             events.append(SystemEvent(f"{peer.label} is now {status.label}."))
@@ -302,11 +307,15 @@ class Session:
         events.append(PresenceEvent())
         return events
 
-    def _absorb_acks(self, from_addr: str, ack: int | None) -> list[Event]:
+    def _absorb_acks(self, from_addr: str, ack: int | None,
+                     stream: str = "group") -> list[Event]:
         if ack is None or ack < 0:
             return []
         events: list[Event] = []
         for item in self.outbox:
+            item_stream = "group" if item.target == GROUP else "dm"
+            if item_stream != stream:
+                continue
             if from_addr not in item.recipients or from_addr in item.confirmed:
                 continue
             if not seq_newer(item.seq, ack):     # item.seq <= ack
@@ -321,26 +330,39 @@ class Session:
             return []      # a direct message between two other people
 
         seq = frame.field_int(2)
-        events = self._absorb_acks(peer.address, frame.field_int(3))
+        inline_stream = "group" if dst == GROUP else "dm"
+        events = self._absorb_acks(peer.address, frame.field_int(3), inline_stream)
         idx, cnt = frame.field_int(4, 0), frame.field_int(5, 1)
         text = frame.field_str(6)
         convo = self._convo_for(dst, peer.address)
         peer.typing.pop(convo, None)
 
+        ack_key = self._ack_key(peer.address, dst)
         if cnt <= 1:
-            self._note_received(peer.address, seq)
+            self._note_received(ack_key, seq)
             return events + [self._deliver(convo, peer, seq, text, now)]
 
-        slot = self._reassembly.setdefault((peer.address, seq), {"count": cnt, "parts": {}})
+        slot = self._reassembly.setdefault((ack_key, seq), {"count": cnt, "parts": {}})
         slot["parts"][idx] = text
         if len(slot["parts"]) >= slot["count"]:
             whole = "".join(slot["parts"][i] for i in sorted(slot["parts"]))
-            del self._reassembly[(peer.address, seq)]
-            self._note_received(peer.address, seq)
+            del self._reassembly[(ack_key, seq)]
+            self._note_received(ack_key, seq)
             events.append(self._deliver(convo, peer, seq, whole, now))
         return events
 
-    def _note_received(self, address: str, seq: int) -> None:
+    def _ack_key(self, address: str, dst: str) -> str:
+        """Namespace the per-peer ack mark by message stream.
+
+        Group and direct messages have independent sequence counters on the
+        sender, so their seq numbers overlap. Keeping one contiguous mark per
+        (peer, stream) stops a direct message's seq from punching an
+        unfillable hole in the group mark, which used to jam acknowledgement
+        permanently and cause endless retransmission.
+        """
+        return address if dst == GROUP else address + "#dm"
+
+    def _note_received(self, key: str, seq: int) -> None:
         """Advance the acknowledgement high-water mark, contiguously.
 
         Two things matter here. Acknowledge only once a message is fully
@@ -349,14 +371,14 @@ class Session:
         unbroken run, because the mark is inclusive: jumping to 5 while 4 is
         still incomplete would silently confirm 4 as well.
         """
-        seen = self._received.setdefault(address, set())
+        seen = self._received.setdefault(key, set())
         seen.add(seq)
-        mark = self.acks.get(address, 0)
+        mark = self.acks.get(key, 0)
         while ((mark + 1) % proto.SEQ_MODULO) in seen:
             mark = (mark + 1) % proto.SEQ_MODULO
             seen.discard(mark)
-        if mark != self.acks.get(address, 0):
-            self.acks[address] = mark
+        if mark != self.acks.get(key, 0):
+            self.acks[key] = mark
             self._force_heartbeat = True     # get the acknowledgement moving
 
     def _deliver(self, convo_key: str, peer: Peer, seq: int, text: str,
@@ -411,8 +433,13 @@ class Session:
         text = proto.sanitize(text)
         if not text:
             return []
-        self.seq = (self.seq + 1) % proto.SEQ_MODULO
-        overhead = proto.message(self.address, target, self.seq, 0, 0, 9, "").size
+        if target == GROUP:
+            self.group_seq = (self.group_seq + 1) % proto.SEQ_MODULO
+            seq = self.group_seq
+        else:
+            self.dm_seq = (self.dm_seq + 1) % proto.SEQ_MODULO
+            seq = self.dm_seq
+        overhead = proto.message(self.address, target, seq, 0, 0, 9, "").size
         fragments = proto.fragment(text, max(16, self.payload_budget - overhead))
 
         if target == GROUP:
@@ -420,13 +447,13 @@ class Session:
         else:
             recipients = {target}
 
-        item = Outgoing(self.seq, target, text, fragments,
+        item = Outgoing(seq, target, text, fragments,
                         recipients=recipients, created=now)
         self.outbox.append(item)
         self.last_typing_sent[target] = 0.0
 
         convo = self.conversation(target)
-        event = MessageEvent(target, self.nick, text, False, self.seq, now,
+        event = MessageEvent(target, self.nick, text, False, seq, now,
                              self.colour, self.address)
         convo.entries.append(event)
 
@@ -438,7 +465,7 @@ class Session:
                 f"{label} yet. Anyone in range could read it.",
                 level="warn", convo=target,
             ))
-        return [event, DeliveryEvent(self.seq), *warn]
+        return [event, DeliveryEvent(seq), *warn]
 
     def on_keystroke(self, buffer_nonempty: bool, target: str, now: float) -> list[Event]:
         self.last_keystroke = now
@@ -571,7 +598,8 @@ class Session:
             if not reachable:
                 continue
 
-            ack = self.acks.get(item.target, proto.NO_ACK) if item.target != GROUP else proto.NO_ACK
+            ack = (self.acks.get(item.target + "#dm", proto.NO_ACK)
+                   if item.target != GROUP else proto.NO_ACK)
             total = len(item.fragments)
             complete = True
             for idx, part in enumerate(item.fragments):
