@@ -330,6 +330,12 @@ class Session:
             return []      # a direct message between two other people
 
         seq = frame.field_int(2)
+
+              import os
+        if os.environ.get("LORALINE_TRACE"):
+            with open(os.environ["LORALINE_TRACE"] + ".ack", "a") as f:
+                f.write(f"on_message from={peer.address} dst={frame.field_str(1)!r} seq={seq} cnt={frame.field_int(5,1)}\n")
+      
         inline_stream = "group" if dst == GROUP else "dm"
         events = self._absorb_acks(peer.address, frame.field_int(3), inline_stream)
         idx, cnt = frame.field_int(4, 0), frame.field_int(5, 1)
@@ -380,6 +386,11 @@ class Session:
         if mark != self.acks.get(key, 0):
             self.acks[key] = mark
             self._force_heartbeat = True     # get the acknowledgement moving
+
+          import os
+        if os.environ.get("LORALINE_TRACE"):
+            with open(os.environ["LORALINE_TRACE"] + ".ack", "a") as f:
+                f.write(f"note_received key={key!r} seq={seq} -> acks={dict(self.acks)}\n")
 
     def _deliver(self, convo_key: str, peer: Peer, seq: int, text: str,
                  now: float) -> MessageEvent:
