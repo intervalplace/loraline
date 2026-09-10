@@ -163,7 +163,10 @@ active impersonator, though not a passive listener.
 - **Retry** three times 90s apart, then a visible failure.
 - **Typing indicator**, per conversation, one packet per 5-second window. On a
   half-duplex radio that doubles as collision avoidance.
-- **Airtime budget** in the status bar, RSSI sparkline in the sidebar.
+- **Airtime budget** in the status bar, and a signal history strip in the
+  sidebar: the last twenty readings as a sparkline, so you can tell a steady
+  link from a drifting one. Block characters, falling back to ASCII on a
+  terminal that is not on a UTF-8 locale.
 
 There is deliberately no nudge. Every other feature here reports something
 true about the other person: presence, typing, delivery, signal. A nudge
@@ -265,3 +268,7 @@ delivered, a direct message being opaque to the third person, an outsider with
 the right radio and no key reading nothing, per-conversation typing, store and
 forward, address forgery, and a fragmented encrypted message surviving a link
 dropping one packet in four.
+
+## Licence
+
+MIT. Do what you like with it.
