@@ -78,8 +78,15 @@ def build(args) -> tuple[RadioConfig, float, object, list[str]]:
     )
     duty = args.duty if args.duty is not None else preset["duty"]
     passphrase = getattr(args, "key", None) or os.environ.get("LORALINE_KEY")
-    identity = Identity.load_or_create(getattr(args, "identity", None) or crypto.DEFAULT_PATH)
-    keyring = Keyring(identity, passphrase)
+    id_path = getattr(args, "identity", None) or crypto.DEFAULT_PATH
+    identity = Identity.load_or_create(id_path)
+    # Persist learned peer keys beside the identity so a known peer is
+    # recognised and named the moment they speak again, instead of appearing
+    # as a raw address until a fresh hello arrives. Each identity gets its own
+    # store, so two clients sharing a machine do not share a roster.
+    from pathlib import Path as _P
+    keystore = _P(str(id_path) + ".peers.json")
+    keyring = Keyring(identity, passphrase, keystore=keystore)
     return cfg, duty, identity, keyring, crypto.warnings_for(passphrase)
 
 

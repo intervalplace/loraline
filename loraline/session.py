@@ -211,7 +211,16 @@ class Session:
 
     def peer(self, address: str) -> Peer:
         if address not in self.peers:
-            self.peers[address] = Peer(address)
+            p = Peer(address)
+            # A peer whose key we persisted from an earlier session is known
+            # straight away, and wears the nick we last saw, so they appear as
+            # "mats" rather than a raw address the moment they first speak.
+            if self.keyring is not None and self.keyring.knows(address):
+                p.known_key = True
+                nick = getattr(self.keyring, "nicks", {}).get(address, "")
+                if nick:
+                    p.nick = nick
+            self.peers[address] = p
         return self.peers[address]
 
     def conversation(self, key: str) -> Conversation:
@@ -286,6 +295,8 @@ class Session:
 
     def _on_hello(self, frame: Frame, peer: Peer, now: float) -> list[Event]:
         peer.nick = frame.field_str(1) or peer.nick
+        if self.keyring is not None and peer.nick:
+            self.keyring.remember_nick(peer.address, peer.nick)
         peer.colour = frame.field_int(2, 1) % len(PALETTE)
         reply_requested = frame.field_str(4) == "1"
         learned = self.keyring.learn(peer.address, frame.field_str(3))

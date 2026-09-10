@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import json
 from pathlib import Path
 
 try:
@@ -38,6 +39,7 @@ NONCE_BYTES = 12
 TAG_BYTES = 16
 GROUP = "*"
 DEFAULT_PATH = Path.home() / ".loraline" / "identity"
+DEFAULT_PEERS = Path.home() / ".loraline" / "peers.json"
 
 
 def address_of(public_bytes: bytes) -> str:
@@ -123,12 +125,63 @@ class Keyring:
     an outside listener cannot tell who a packet is even addressed to.
     """
 
-    def __init__(self, identity: Identity, passphrase: str | None = None) -> None:
+    def __init__(self, identity: Identity, passphrase: str | None = None,
+                 keystore=None) -> None:
         self.identity = identity
         self.group = GroupCipher(passphrase) if (passphrase and AVAILABLE) else None
         self.boxes: dict[str, object] = {}
         self.peer_keys: dict[str, bytes] = {}
+        self.nicks: dict[str, str] = {}       # address -> last known nick
         self.failures = 0
+        self.keystore = Path(keystore) if keystore is not None else None
+        if self.keystore is not None:
+            self._load_keystore()
+
+    def _load_keystore(self) -> None:
+        """Restore peer keys learned in earlier sessions.
+
+        Without this, every restart forgets who everyone is: peers show as raw
+        addresses and direct messages are unavailable until a fresh hello
+        arrives. Persisting the keys means a known peer is recognised, and
+        named, the instant they first speak again.
+        """
+        if not AVAILABLE or not self.keystore.exists():
+            return
+        try:
+            data = json.loads(self.keystore.read_text())
+        except Exception:
+            return
+        for address, rec in data.items():
+            try:
+                raw = base64.b64decode(rec["key"], validate=True)
+            except Exception:
+                continue
+            if len(raw) != 32 or address_of(raw) != address:
+                continue          # never trust a stored key that fails its own address
+            self.peer_keys[address] = raw
+            self.boxes[address] = Box(self.identity.key, PublicKey(raw))
+            if rec.get("nick"):
+                self.nicks[address] = rec["nick"]
+
+    def _save_keystore(self) -> None:
+        if self.keystore is None:
+            return
+        data = {addr: {"key": base64.b64encode(raw).decode("ascii"),
+                       "nick": self.nicks.get(addr, "")}
+                for addr, raw in self.peer_keys.items()}
+        try:
+            self.keystore.parent.mkdir(parents=True, exist_ok=True)
+            self.keystore.write_text(json.dumps(data))
+        except Exception:
+            pass          # persistence is best-effort; never break a session over it
+
+    def remember_nick(self, address: str, nick: str) -> None:
+        """Record a peer's nick so it survives a restart, saving if it changed."""
+        if not nick or self.nicks.get(address) == nick:
+            return
+        if address in self.peer_keys:
+            self.nicks[address] = nick
+            self._save_keystore()
 
     @property
     def overhead(self) -> int:
@@ -150,6 +203,7 @@ class Keyring:
             return False
         self.peer_keys[address] = raw
         self.boxes[address] = Box(self.identity.key, PublicKey(raw))
+        self._save_keystore()
         return True
 
     def knows(self, address: str) -> bool:
