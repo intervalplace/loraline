@@ -9,6 +9,11 @@ from .session import Event, Session, SystemEvent
 from .transport import Link
 
 
+import os, time as _t
+_TRACE = os.environ.get("LORALINE_TRACE")
+_last_trace = [0.0]
+
+
 class Client:
     def __init__(self, link: Link, identity: Identity, keyring: Keyring,
                  nick: str, psm: str = "", colour: int = 0) -> None:
@@ -76,6 +81,22 @@ class Client:
                     f"{wait / 60:.0f} min.", level="warn"))
         elif not held:
             self._warned_budget = False
+
+        if _TRACE and now - _last_trace[0] >= 1.0:
+            _last_trace[0] = now
+            with open(_TRACE, "a") as f:
+                f.write(f"\n[{now:.1f}] me={self.session.address} "
+                        f"acks={dict(self.session.acks)}\n")
+                for it in self.session.outbox:
+                    f.write(f"  seq={it.seq} tgt={it.target} "
+                            f"state={it.state.name} att={it.attempts} "
+                            f"recip={sorted(it.recipients)} "
+                            f"conf={sorted(it.confirmed)} "
+                            f"text={it.text[:24]!r}\n")
+                for addr, p in self.session.peers.items():
+                    f.write(f"  peer {addr} nick={p.nick!r} "
+                            f"status={p.status.name} "
+                            f"known_key={p.known_key}\n")
         return events
 
     def shutdown(self) -> None:
