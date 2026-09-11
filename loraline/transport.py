@@ -407,6 +407,7 @@ class Link:
                 frame = proto.decode_line(item.line, self.keyring)
                 if frame is not None:
                     frame.rssi_raw = item.rssi_raw
+                    frame.via = item.interface
                     frames.append(frame)
         return frames, errors
 

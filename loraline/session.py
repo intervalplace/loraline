@@ -140,6 +140,7 @@ class Peer:
     rssi_dbm: int | None = None
     rssi_history: list[int | None] = field(default_factory=list)
     typing: dict[str, float] = field(default_factory=dict)
+    heard_on: set = field(default_factory=set)   # which bearers carried them
     known_key: bool = False
 
     @property
@@ -209,6 +210,15 @@ class Session:
 
     # -- roster ------------------------------------------------------------
 
+    def on_air(self, address: str) -> bool:
+        """Did this person's own transmissions reach us through the air?
+
+        A frame relayed over a socket by somebody else proves they exist, not
+        that they were near enough to hear.
+        """
+        person = self.peers.get(address)
+        return bool(person and "lora" in person.heard_on)
+
     def peer(self, address: str) -> Peer:
         if address not in self.peers:
             p = Peer(address)
@@ -246,6 +256,8 @@ class Session:
         peer.rssi_history.append(peer.rssi_dbm)
         del peer.rssi_history[:-120]
 
+        if getattr(frame, "via", ""):
+            peer.heard_on.add(frame.via)
         was_offline = peer.status is Status.OFFLINE
         peer.last_seen = now
         events: list[Event] = []
@@ -298,8 +310,9 @@ class Session:
         if self.keyring is not None and peer.nick:
             self.keyring.remember_nick(peer.address, peer.nick)
         peer.colour = frame.field_int(2, 1) % len(PALETTE)
-        reply_requested = frame.field_str(4) == "1"
-        learned = self.keyring.learn(peer.address, frame.field_str(3))
+        reply_requested = frame.field_str(5) == "1"
+        learned = self.keyring.learn(peer.address, frame.field_str(3),
+                                     frame.field_str(4))
         # If the peer asked us to hello back (their view of us is missing our
         # key), oblige on the next drain. Send it plainly, without re-requesting,
         # to avoid a request ping-pong.
@@ -707,6 +720,7 @@ class Session:
         if self._send_hello:
             beacon = proto.hello(self.address, self.nick, self.colour,
                                  self.identity.public_b64,
+                                 self.identity.verify_b64,
                                  reply_requested=self._hello_reply_requested)
             if offer(beacon, GROUP):
                 self._send_hello = False

@@ -7,7 +7,7 @@ Frames are newline-terminated, fields separated by 0x1f (ASCII unit
 separator, which never appears in typed text). The first character is the
 frame type, which lets the reader resynchronise after line noise.
 
-    H  hello      src, nick, colour, public key
+    H  hello      src, nick, colour, public key, signing key, reply?
     P  presence   src, status, nick, colour, personal message, acks
     M  message    src, dst, seq, ack, idx, cnt, text
     T  typing     src, dst
@@ -105,6 +105,10 @@ class Frame:
     type: str
     fields: list[str] = field(default_factory=list)
     rssi_raw: int | None = None
+    # Which bearer this arrived on. Being heard on air is a different claim
+    # from being reachable over a socket, and only the first means somebody
+    # was somewhere.
+    via: str = ""
 
     def encode(self) -> bytes:
         return (US.join([self.type, *self.fields]) + TERM).encode("utf-8")
@@ -127,7 +131,7 @@ class Frame:
 
 
 def hello(src: str, nick: str, colour: int, public_b64: str,
-          reply_requested: bool = False) -> Frame:
+          verify_b64: str = "", reply_requested: bool = False) -> Frame:
     """Introduce ourselves: address, nick, colour, public key.
 
     reply_requested asks the recipient to send their own hello straight back.
@@ -136,7 +140,10 @@ def hello(src: str, nick: str, colour: int, public_b64: str,
     is a trailing "1"; older receivers simply don't see it and a stale key
     exchange would stay stuck, so both ends should run this version.
     """
-    fields = [src, nick, str(colour), public_b64]
+    # Both public halves, then the flag. The signing key sits at field four
+    # because the address is the hash of the pair, so a hello without it
+    # cannot be checked against the address it claims.
+    fields = [src, nick, str(colour), public_b64, verify_b64]
     if reply_requested:
         fields.append("1")
     return Frame("H", fields)

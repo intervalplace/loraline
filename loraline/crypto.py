@@ -31,6 +31,7 @@ try:
         crypto_aead_chacha20poly1305_ietf_encrypt as _enc,
     )
     from nacl.public import Box, PrivateKey, PublicKey
+    from nacl.signing import SigningKey, VerifyKey
     AVAILABLE = True
 except ImportError:  # pragma: no cover
     AVAILABLE = False
@@ -42,9 +43,15 @@ DEFAULT_PATH = Path.home() / ".loraline" / "identity"
 DEFAULT_PEERS = Path.home() / ".loraline" / "peers.json"
 
 
-def address_of(public_bytes: bytes) -> str:
-    """Six hex characters derived from a public key. Short enough for a header."""
-    return hashlib.blake2b(public_bytes, digest_size=3).hexdigest()
+def address_of(public_bytes: bytes, verify_bytes: bytes = b"") -> str:
+    """Six hex characters, derived from BOTH halves of an identity.
+
+    Binding the address to the signing key as well as the encryption key is
+    what lets a stranger check a signature: given the two public keys they can
+    recompute the address themselves, so nobody can pair a real encryption key
+    with a signing key they invented.
+    """
+    return hashlib.blake2b(public_bytes + verify_bytes, digest_size=3).hexdigest()
 
 
 def fingerprint(public_bytes: bytes) -> str:
@@ -54,19 +61,40 @@ def fingerprint(public_bytes: bytes) -> str:
 
 
 class Identity:
+    """One stored secret, two keypairs.
+
+    X25519 for talking privately, Ed25519 for signing what happened. Derived
+    separately rather than reusing one key for both jobs, which is the sort of
+    shortcut that looks free and is not.
+    """
+
     def __init__(self, private_bytes: bytes | None = None) -> None:
         if not AVAILABLE:
-            self.key = None
+            self.key = self.signing = None
+            self.verify_bytes = b""
             self.public_bytes = hashlib.blake2b(
                 private_bytes or os.urandom(32), digest_size=32
             ).digest()
-        elif private_bytes:
-            self.key = PrivateKey(private_bytes)
-            self.public_bytes = bytes(self.key.public_key)
         else:
-            self.key = PrivateKey.generate()
+            self.key = (PrivateKey(private_bytes) if private_bytes
+                        else PrivateKey.generate())
             self.public_bytes = bytes(self.key.public_key)
-        self.address = address_of(self.public_bytes)
+            seed = hashlib.blake2b(bytes(self.key), person=b"loraline-sign",
+                                   digest_size=32).digest()
+            self.signing = SigningKey(seed)
+            self.verify_bytes = bytes(self.signing.verify_key)
+        self.address = address_of(self.public_bytes, self.verify_bytes)
+
+    @property
+    def verify_b64(self) -> str:
+        return base64.b64encode(self.verify_bytes or b"").decode("ascii")
+
+    def sign(self, message: bytes) -> str:
+        """A detached signature, base64. Raises without PyNaCl, because an
+        unsigned record claiming to be signed is worse than none."""
+        if not AVAILABLE:
+            raise RuntimeError("signing needs PyNaCl: pip install pynacl")
+        return base64.b64encode(self.signing.sign(message).signature).decode("ascii")
 
     @property
     def public_b64(self) -> str:
@@ -131,6 +159,7 @@ class Keyring:
         self.group = GroupCipher(passphrase) if (passphrase and AVAILABLE) else None
         self.boxes: dict[str, object] = {}
         self.peer_keys: dict[str, bytes] = {}
+        self.verifiers: dict[str, bytes] = {}  # address -> signing key
         self.nicks: dict[str, str] = {}       # address -> last known nick
         self.failures = 0
         self.keystore = Path(keystore) if keystore is not None else None
@@ -156,10 +185,17 @@ class Keyring:
                 raw = base64.b64decode(rec["key"], validate=True)
             except Exception:
                 continue
-            if len(raw) != 32 or address_of(raw) != address:
+            try:
+                vraw = (base64.b64decode(rec.get("verify", ""), validate=True)
+                        if rec.get("verify") else b"")
+            except Exception:
+                continue
+            if len(raw) != 32 or address_of(raw, vraw) != address:
                 continue          # never trust a stored key that fails its own address
             self.peer_keys[address] = raw
             self.boxes[address] = Box(self.identity.key, PublicKey(raw))
+            if vraw:
+                self.verifiers[address] = vraw
             if rec.get("nick"):
                 self.nicks[address] = rec["nick"]
 
@@ -167,6 +203,8 @@ class Keyring:
         if self.keystore is None:
             return
         data = {addr: {"key": base64.b64encode(raw).decode("ascii"),
+                       "verify": base64.b64encode(
+                           self.verifiers.get(addr, b"")).decode("ascii"),
                        "nick": self.nicks.get(addr, "")}
                 for addr, raw in self.peer_keys.items()}
         try:
@@ -187,24 +225,44 @@ class Keyring:
     def overhead(self) -> int:
         return NONCE_BYTES + TAG_BYTES if AVAILABLE else 0
 
-    def learn(self, address: str, public_b64: str) -> bool:
-        """Register a peer's public key. Returns True if it was new."""
+    def learn(self, address: str, public_b64: str,
+              verify_b64: str = "") -> bool:
+        """Register a peer's public keys. Returns True if they were new.
+
+        Both halves are checked against the address together, so a real
+        encryption key cannot be paired with an invented signing key.
+        """
         if not AVAILABLE:
             return False
         try:
             raw = base64.b64decode(public_b64, validate=True)
+            vraw = (base64.b64decode(verify_b64, validate=True)
+                    if verify_b64 else b"")
         except Exception:
             return False
-        # The address is derived from the key, so a mismatch means the sender
-        # is claiming an address that is not theirs.
-        if len(raw) != 32 or address_of(raw) != address:
+        if len(raw) != 32 or address_of(raw, vraw) != address:
             return False
+        if vraw:
+            self.verifiers[address] = vraw
         if self.peer_keys.get(address) == raw:
+            self._save_keystore()
             return False
         self.peer_keys[address] = raw
         self.boxes[address] = Box(self.identity.key, PublicKey(raw))
         self._save_keystore()
         return True
+
+    def verify(self, address: str, message: bytes, signature_b64: str) -> bool:
+        """True only if this exact address signed these exact bytes."""
+        raw = self.verifiers.get(address)
+        if not AVAILABLE or raw is None:
+            return False
+        try:
+            VerifyKey(raw).verify(message,
+                                  base64.b64decode(signature_b64, validate=True))
+            return True
+        except Exception:
+            return False
 
     def knows(self, address: str) -> bool:
         return address in self.boxes
