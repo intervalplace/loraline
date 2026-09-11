@@ -1,5 +1,5 @@
 """Norway on LoRa, England on TCP, one machine bridging. Real sockets."""
-import sys, time, threading
+import os, sys, time, threading
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
 from loraline import protocol as p
 from loraline.crypto import GROUP, Identity, Keyring
@@ -78,7 +78,7 @@ assert hank.keyring.failures > before
 ok("the bridge forwards a direct message it cannot itself read")
 
 # delivery confirmation crosses the boundary too
-item = dave.session.outgoing(dave.session.seq)
+item = dave.session.outgoing(dave.session.dm_seq)
 settle(3)
 assert item.resolve() in (Delivery.DELIVERED, Delivery.PARTIAL, Delivery.SENT)
 dave.session._force_heartbeat = True; will.session._force_heartbeat = True

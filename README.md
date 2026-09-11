@@ -184,6 +184,22 @@ two transmitting at once lose both packets. At SF10 with no duty limit, five
 or six before it degrades. Under the EU 1% cap, three is realistic and four is
 optimistic. It is a small-group tool by physics, not by choice.
 
+## Signing, and why an address is two keys
+
+Every identity carries an X25519 keypair for talking privately and an Ed25519
+keypair for signing what happened, derived separately from the same stored
+secret. An address is the hash of **both** public halves, which is what lets a
+stranger check a signature: given the two keys they can recompute the address
+themselves, so nobody can pair a real encryption key with a signing key they
+invented.
+
+Hello carries both halves, and the peer keystore stores both, so a restart
+keeps the ability to verify as well as the ability to talk.
+
+Frames also record which bearer carried them. Being heard on air is a
+different claim from being reachable over a socket, and `Session.on_air` is
+what applications use to tell the two apart.
+
 ## Architecture
 
 ```

@@ -1,6 +1,6 @@
 """Three sessions on one simulated broadcast bus. No hardware required."""
-import sys, time
-sys.path.insert(0, '/home/claude/loraline')
+import os, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loraline import protocol as p
 from loraline.crypto import GROUP, Identity, Keyring
 from loraline.session import Session, MessageEvent, SystemEvent
@@ -151,7 +151,7 @@ t += 400
 for n in (a, b, c): n.session.tick(t)
 bus.step(t, [b]); t += 1                    # only dave is back
 a.session.compose("anyone?", GROUP, t)
-item = a.session.outgoing(a.session.seq)
+item = a.session.outgoing(a.session.group_seq)
 assert item.recipients == {b.addr}, "absent members are not counted as recipients"
 ok("group delivery counts only who was actually there")
 
@@ -175,9 +175,16 @@ ok("fragmented encrypted message survives a link dropping 1 in 4")
 # ---------- address forgery ----------
 victim = Node("victim", "k", Bus())
 liar = Identity()
-assert not victim.keyring.learn("000000", liar.public_b64), "address must match key"
-assert victim.keyring.learn(liar.address, liar.public_b64)
-ok("a node cannot claim an address that does not match its key")
+assert not victim.keyring.learn("000000", liar.public_b64, liar.verify_b64), \
+    "address must match the keys"
+assert victim.keyring.learn(liar.address, liar.public_b64, liar.verify_b64)
+ok("a node cannot claim an address that does not match its keys")
+
+# an address covers both halves, so a real encryption key cannot be paired
+# with a signing key somebody invented
+other = Identity()
+assert not victim.keyring.learn(liar.address, liar.public_b64, other.verify_b64)
+ok("an invented signing key cannot be attached to a real address")
 
 print()
 from loraline.transport import RadioConfig
