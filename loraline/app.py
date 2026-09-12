@@ -20,7 +20,7 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import crypto, detect, host as hosting, service, settings as store
+from . import crypto, detect, face as faces, host as hosting, service, settings as store
 from .client import Client
 from .crypto import GROUP, Identity, Keyring
 from .protocol import Delivery, Status
@@ -58,6 +58,9 @@ class App:
         self.host = None
         self.autostart = service.Autostart()
         self.watchers = 0          # how many windows are open on this
+        self.faces = faces.Faces()
+        self.arriving: dict = {}   # address -> pieces of their picture
+        self.asked: dict = {}      # address -> when we last asked
 
     # -- serving -----------------------------------------------------------
 
@@ -135,12 +138,13 @@ class App:
         route = "/" + path.lstrip("/").split("?")[0]
         body = PAGE
         for panel in self.panels:
-            if panel.route and route.rstrip("/") == panel.route.rstrip("/"):
-                try:
-                    body = panel.page()
-                except Exception:
-                    body = PAGE
-                break
+            try:
+                if not panel.owns(route):
+                    continue
+                body = panel.page(route)
+            except Exception:
+                body = PAGE
+            break
         return self.with_nav(body, route)
 
     def with_nav(self, page: str, here: str) -> str:
@@ -148,8 +152,14 @@ class App:
 
         Injected rather than copied into each application, because four copies
         of a navigation bar is four places to forget one.
+
+        Not on a page a panel serves under its own prefix: a document being
+        read wants to be a document, and the reader carries its own way back.
         """
         if not self.panels:
+            return page
+        if not any(here.rstrip("/") == p.route.rstrip("/") for p in self.panels) \
+           and here.rstrip("/") != "/":
             return page
         bar = hosting.nav_html(self.panels, here)
         marker = "<body>"
@@ -251,6 +261,8 @@ class App:
         self.identity = Identity.load_or_create(crypto.DEFAULT_PATH)
         keyring = Keyring(self.identity, self.settings.passphrase,
                           keystore=str(crypto.DEFAULT_PATH) + ".peers.json")
+        # Beside the keypair, because that is what a face belongs to.
+        self.faces.load(str(crypto.DEFAULT_PATH) + ".faces.json")
         bearers = []
         if chosen and not detect.answers(chosen):
             # Applying a band to something that is not a radio takes nine
@@ -286,7 +298,8 @@ class App:
         self.client = Client(self.link, self.identity, keyring,
                              nick=self.settings.nick)
         self.host = hosting.Host(client=self.client, identity=self.identity,
-                                 panels=self.panels, _note=self.note)
+                                 panels=self.panels, faces=self.faces,
+                                 _note=self.note, _set_face=self.set_my_face)
         for panel in self.panels:
             try:
                 panel.start(self.host)
@@ -294,6 +307,8 @@ class App:
                 self.note(f"{panel.title} would not start: {exc}", "warn")
         if self.panels:
             self.note("Also here: " + ", ".join(p.title for p in self.panels) + ".")
+        self.client.session.set_face_mark(
+            faces.mark(self.faces.own(self.identity.address)))
         self.busy = ""
         self.note(f"You are {self.settings.nick} ({self.identity.address}).")
         self.publish(self.snapshot())
@@ -321,6 +336,19 @@ class App:
             self.settings = store.Settings()
             store.save(self.settings)
             self.note("Settings cleared. Start again.")
+        elif what == "face" and self.client is not None:
+            raw = order.get("bytes")
+            if raw:
+                try:
+                    import base64
+                    import io
+                    self.set_my_face(faces.from_image(
+                        io.BytesIO(base64.b64decode(raw))))
+                except Exception as exc:
+                    self.note(f"that picture would not go: {exc}", "warn")
+        elif what == "unface" and self.client is not None:
+            self.set_my_face("")
+            self.note("Back to the picture your address had.")
         elif what == "autostart":
             wanted = bool(order.get("on"))
             ok = self.autostart.turn_on() if wanted else self.autostart.turn_off()
@@ -373,15 +401,20 @@ class App:
         session = self.client.session
         peers = []
         for peer in sorted(session.peers.values(), key=lambda p: p.label.lower()):
+            picture = self.faces.of(peer.address)
             peers.append({"address": peer.address, "name": peer.label,
                           "status": peer.status.value, "psm": peer.psm,
                           "known": peer.known_key,
+                          "face": {"pixels": faces.unpack(picture),
+                                   "colours": list(faces.colours_of(picture))},
                           "unread": self.unread.get(peer.address, 0)})
         messages = [dict(item, state=self.state_of(item))
                     for item in self.threads.get(self.convo, [])[-80:]]
         base.update({
             "me": {"nick": session.nick, "address": self.identity.address,
-                   "psm": session.psm, "status": session.status.value},
+                   "psm": session.psm, "status": session.status.value,
+                   "own_face": bool(self.faces.mine),
+                   "face": self.face_of(self.identity.address)},
             "peers": peers,
             "convo": self.convo,
             "unread_group": self.unread.get(GROUP, 0),
@@ -398,6 +431,8 @@ class App:
     def absorb(self, event) -> None:
         from .session import AppEvent
         if isinstance(event, AppEvent):
+            if event.app == faces.APP:
+                return self.face_frame(event.src, event.payload)
             for panel in self.panels:
                 if panel.tag == event.app:
                     try:
@@ -418,11 +453,64 @@ class App:
         elif isinstance(event, PresenceEvent):
             self.note(event.text)
 
+    # -- faces -------------------------------------------------------------
+
+    def face_frame(self, src: str, payload: str) -> None:
+        """Somebody asking for a picture, or sending one."""
+        if payload.startswith("?"):
+            wanted = payload[1:]
+            mine = self.faces.own(self.identity.address)
+            if wanted and wanted != faces.mark(mine):
+                return          # they are after a picture we no longer have
+            for piece in faces.offer(mine):
+                self.client.session.send_app(faces.APP, piece)
+            return
+        collecting = self.arriving.setdefault(src, faces.Arriving())
+        whole = collecting.take(payload)
+        if whole is None:
+            return
+        self.arriving.pop(src, None)
+        self.asked.pop(src, None)
+        if self.faces.learn(src, whole):
+            peer = self.client.session.peers.get(src)
+            self.note(f"{peer.label if peer else src} has a face now.")
+
+    def want_faces(self, now: float) -> None:
+        """Ask anybody whose picture we do not have for it.
+
+        Only for people we can hear, only once a minute, and only when their
+        mark says they have something we lack. A face is set once and then
+        almost never, so this is quiet after the first minute of knowing
+        somebody.
+        """
+        if self.client is None:
+            return
+        for peer in self.client.session.online_peers():
+            if not peer.face_mark:
+                continue
+            if faces.mark(self.faces.of(peer.address, fallback=False)) == peer.face_mark:
+                continue
+            if now - self.asked.get(peer.address, 0.0) < 60.0:
+                continue
+            self.asked[peer.address] = now
+            self.client.session.send_app(faces.APP, faces.ask(peer.face_mark))
+
+    def set_my_face(self, picture: str) -> None:
+        self.faces.set_mine(picture)
+        self.client.session.set_face_mark(faces.mark(picture))
+        self.note("Your picture is set. People near you will pick it up.")
+
     def state_of(self, item) -> str:
         if item["mine"] and self.client is not None:
             out = self.client.session.outgoing(item["seq"])
             return out.state.value if out is not None else ""
         return ""
+
+    def face_of(self, address: str) -> dict:
+        picture = (self.faces.own(address) if address == self.identity.address
+                   else self.faces.of(address))
+        return {"pixels": faces.unpack(picture),
+                "colours": list(faces.colours_of(picture))}
 
     def airtime(self) -> str:
         for bearer in self.link.interfaces if self.link else []:
@@ -454,6 +542,7 @@ class App:
             if self.client is not None:
                 for event in self.client.pump():
                     self.absorb(event)
+                self.want_faces(now)
                 for panel in self.panels:
                     # A panel that is always on keeps working whatever is on
                     # screen; that is the whole difference between a game and
@@ -552,6 +641,18 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
+canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid var(--rule);
+  border-radius:2px;background:var(--panel);flex:none}
+.who{display:flex;gap:.5rem;align-items:center}
+.who canvas.face{width:26px;height:26px}
+.whotext{min-width:0;flex:1}
+.mine{display:flex;gap:.7rem;align-items:center;margin:.2rem 0 .6rem}
+.mine .lines{font-size:.76rem;color:var(--faint);line-height:1.45}
+.mine label{color:var(--soft);text-decoration:underline;
+  text-decoration-color:var(--mark);cursor:pointer}
+.mine input[type=file]{display:none}
+.mine button.plain{background:none;border:0;color:var(--faint);padding:0;
+  font-size:.76rem;text-decoration:underline;cursor:pointer}
 @media(max-width:40rem){.cols{flex-direction:column}.side{width:auto}}
 </style></head><body>
 <div class="wrap">
@@ -643,6 +744,17 @@ function talking(){
   return `
   <div class="cols">
     <div class="side">
+      <h3>you</h3>
+      <div class="mine">
+        <canvas class="face" id="myface" width="32" height="32"></canvas>
+        <div class="lines">
+          <label for="pick">use a photograph</label>
+          <input type="file" id="pick" accept="image/*">
+          ${(state.me||{}).own_face
+            ? '<br><button class="plain" type="button" onclick="send({do:\'unface\'})">back to the default</button>'
+            : '<br>the one your address came with'}
+        </div>
+      </div>
       <h3>this window</h3>
       <p class="staying">${staying()}</p>
       <h3>conversations</h3>
@@ -651,12 +763,15 @@ function talking(){
         ${state.unread_group ? `<span class="pip">${state.unread_group}</span>` : ''}
         everybody</button>
       <h3>in range</h3>
-      ${here.length ? here.map(p => `
+      ${here.length ? here.map((p,i) => `
         <button class="who" ${state.convo===p.address?'aria-current="page"':''}
           onclick="send({do:'convo',convo:'${p.address}'})">
-          ${p.unread ? `<span class="pip">${p.unread}</span>` : ''}
-          <span class="dot ${p.status}"></span>${esc(p.name)}
-          ${p.psm ? `<span class="psm">${esc(p.psm)}</span>` : ''}
+          <canvas class="face" data-face="${i}" width="32" height="32"></canvas>
+          <span class="whotext">
+            ${p.unread ? `<span class="pip">${p.unread}</span>` : ''}
+            <span class="dot ${p.status}"></span>${esc(p.name)}
+            ${p.psm ? `<span class="psm">${esc(p.psm)}</span>` : ''}
+          </span>
         </button>`).join('') : '<p class="hint">Nobody yet. They appear on their own.</p>'}
     </div>
     <div class="talk">
@@ -676,6 +791,57 @@ function talking(){
         .map(l => `<div class="${l.role}">${esc(l.text)}</div>`).join('')}</div>
     </div>
   </div>`;
+}
+
+/* Faces arrive as a palette and a pixel a byte, which is what the radio
+   carried. Drawing one is a loop, not a library. */
+function paint(canvas, face){
+  if(!canvas || !face || !face.pixels || !face.pixels.length) return;
+  const g = canvas.getContext('2d');
+  const n = Math.round(Math.sqrt(face.pixels.length));
+  canvas.width = n; canvas.height = n;
+  const img = g.createImageData(n, n);
+  for(let i = 0; i < face.pixels.length; i++){
+    const hex = face.colours[face.pixels[i]] || '#000000';
+    img.data[i*4]   = parseInt(hex.slice(1,3),16);
+    img.data[i*4+1] = parseInt(hex.slice(3,5),16);
+    img.data[i*4+2] = parseInt(hex.slice(5,7),16);
+    img.data[i*4+3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+}
+
+function paintAll(){
+  if(state.me) paint(document.getElementById('myface'), state.me.face);
+  const here = (state.peers||[]).filter(p => p.status !== 'x');
+  here.forEach((p,i) => paint(document.querySelector(`canvas[data-face="${i}"]`), p.face));
+  const pick = document.getElementById('pick');
+  if(pick && !pick.dataset.wired){
+    pick.dataset.wired = '1';
+    pick.onchange = ev => {
+      const file = ev.target.files[0];
+      if(!file) return;
+      /* The node turns it into thirty-two pixels: one place, one way, so
+         everybody's face is made the same. This only shrinks it first, so a
+         twelve megapixel photograph is not pushed at something that will keep
+         a thousand pixels of it. */
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, 256 / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.width*scale));
+          c.height = Math.max(1, Math.round(img.height*scale));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          send({do:'face', bytes: c.toDataURL('image/png').split(',')[1]});
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+      ev.target.value = '';
+    };
+  }
 }
 
 function say(e){
@@ -710,6 +876,7 @@ function render(){
     if(keep){ const el = document.getElementById(keep); if(el) el.focus(); }
     const lines = document.getElementById('lines');
     if(lines) lines.scrollTop = lines.scrollHeight;
+    paintAll();
   }
 }
 

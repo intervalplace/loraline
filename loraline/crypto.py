@@ -43,15 +43,33 @@ DEFAULT_PATH = Path.home() / ".loraline" / "identity"
 DEFAULT_PEERS = Path.home() / ".loraline" / "peers.json"
 
 
+# Eight bytes, so sixteen hex characters.
+#
+# It was three, and three is broken: twenty-four bits is sixteen million
+# addresses, an ordinary laptop makes twenty thousand keypairs a second, and a
+# keypair whose address matches somebody else's is therefore about six minutes
+# of work. Everything here checks a signature against the address, so a
+# matching keypair is a licence to write in that person's name, and being on a
+# radio does not help at all: the grinding happens offline with nothing
+# transmitted.
+#
+# Sixty-four bits is thirteen million years on that same laptop. Even against
+# something a billion times faster it is a fortnight, for the privilege of
+# impersonating somebody on a village radio. Ninety-six bits or more would
+# cost real airtime on every heartbeat and buy nothing anybody needs.
+ADDRESS_BYTES = 8
+
+
 def address_of(public_bytes: bytes, verify_bytes: bytes = b"") -> str:
-    """Six hex characters, derived from BOTH halves of an identity.
+    """Sixteen hex characters, derived from BOTH halves of an identity.
 
     Binding the address to the signing key as well as the encryption key is
     what lets a stranger check a signature: given the two public keys they can
     recompute the address themselves, so nobody can pair a real encryption key
     with a signing key they invented.
     """
-    return hashlib.blake2b(public_bytes + verify_bytes, digest_size=3).hexdigest()
+    return hashlib.blake2b(public_bytes + verify_bytes,
+                           digest_size=ADDRESS_BYTES).hexdigest()
 
 
 def fingerprint(public_bytes: bytes) -> str:

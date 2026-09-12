@@ -158,7 +158,7 @@ def presence(src: str, status: Status, acks: dict[str, int],
              nick: str | None = None, colour: int | None = None,
              psm: str | None = None,
              lost: dict[str, set[int]] | None = None,
-             app: str = "") -> Frame:
+             app: str = "", face: str = "") -> Frame:
     """A heartbeat. Identity fields are optional and usually omitted.
 
     Presence is the most frequent thing on the air, so it is also the most
@@ -172,14 +172,21 @@ def presence(src: str, status: Status, acks: dict[str, int],
     because a heartbeat is already being sent and a few more characters inside
     it cost nothing. It is kept separate from the personal message so an
     application cannot clobber what a person typed.
+
+    `face` is six characters that say which picture this person has, so two
+    people can tell whether they have the same one without either of them
+    sending it. The picture itself is seven hundred characters and arrives by
+    being asked for.
     """
     fields = [src, status.value, encode_acks(acks, lost)]
     if nick is not None:
         fields += [nick, str(colour or 0), psm or ""]
-    if app:
+    if app or face:
         while len(fields) < 6:
             fields.append("")
         fields.append(app)
+    if face:
+        fields.append(face)
     return Frame("P", fields)
 
 

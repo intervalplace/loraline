@@ -56,8 +56,19 @@ class Panel:
         change, to every open tab."""
         return {}
 
-    def page(self) -> str:
-        """Our page, as HTML."""
+    def owns(self, path: str) -> bool:
+        """Is this path ours?
+
+        A panel usually has one page, but not always: hearsay serves a reader
+        at /page/<address>/<name> as well as its feed, and something that
+        served a whole set of documents would want a prefix too.
+        """
+        here = "/" + path.lstrip("/").split("?")[0]
+        return bool(self.route) and here.rstrip("/") == self.route.rstrip("/")
+
+    def page(self, path: str = "") -> str:
+        """Our page, as HTML. `path` is what was asked for, for panels that
+        serve more than one thing."""
         return ""
 
 
@@ -93,7 +104,9 @@ class Host:
     client: object
     identity: object
     panels: list = field(default_factory=list)
+    faces: object = None            # the pictures, which belong to the identity
     _note: object = None
+    _set_face: object = None
 
     def send(self, tag: str, payload: str) -> None:
         self.client.session.send_app(tag, payload)
@@ -110,6 +123,22 @@ class Host:
         from .crypto import GROUP
         frame = proto.data(self.client.session.address, GROUP, tag, payload)
         return self.client.link.can_send(frame, GROUP)
+
+    def face(self, address: str = "") -> str:
+        """Somebody's picture, packed. Theirs, or your own if you ask for no
+        one in particular. Anything built on loraline reads it from here
+        rather than keeping its own."""
+        if self.faces is None:
+            return ""
+        who = address or self.address
+        return (self.faces.own(who) if who == self.address
+                else self.faces.of(who))
+
+    def set_face(self, picture: str) -> None:
+        """Change your picture, everywhere at once. A panel that wanted its
+        own would be putting a seam back into a thing that has one face."""
+        if self._set_face is not None:
+            self._set_face(picture)
 
     def note(self, text: str, role: str = "muted") -> None:
         if self._note is not None:
