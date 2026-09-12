@@ -351,4 +351,105 @@ spare = free.getsockname()[1]; free.close()
 assert _service.only_one(spare)
 ok("a second copy finds the first rather than fighting it for the radio")
 
+
+# ---------- a face belongs to an identity ----------
+from loraline import face as _face
+
+me_addr = "a1b2c3"
+default = _face.identicon(me_addr)
+assert len(_face.unpack(default)) == _face.SIDE ** 2
+assert len(_face.colours_of(default)) == 8
+assert _face.identicon(me_addr) == default
+assert _face.identicon("d4e5f6") != default
+# mirrored, because symmetry is what makes a blotch read as a face
+px = _face.unpack(default)
+S = _face.SIDE
+assert all(px[y*S + x] == px[y*S + S-1-x] for y in range(S) for x in range(S // 2))
+ok(f"everybody has a face before they set one, {len(default)} characters of it")
+
+marks = {_face.mark(_face.identicon(f"{n:06x}")) for n in range(400)}
+assert len(marks) > 395, len(marks)
+ok(f"six characters say which picture somebody has: {len(marks)} distinct in 400")
+
+pieces = _face.offer(default)
+assert all(len(p) < 110 for p in pieces), max(len(p) for p in pieces)
+import random as _random
+for shuffled in (pieces, list(reversed(pieces)), _random.sample(pieces, len(pieces))):
+    coming = _face.Arriving()
+    whole = None
+    for piece in shuffled:
+        whole = coming.take(piece) or whole
+    assert whole == default
+ok(f"and the picture itself arrives in {len(pieces)} frames, in any order")
+
+broken = list(pieces)
+broken[1] = broken[1][:-4] + "XXXX"
+coming = _face.Arriving()
+assert not any(coming.take(p) for p in broken), "a damaged piece must not be kept"
+assert coming.take("nonsense") is None and coming.take("=bad") is None
+ok("a damaged or nonsense piece is thrown away rather than half-kept")
+
+# two faces arriving at once cannot be spliced into a third
+other = _face.identicon("d4e5f6")
+coming = _face.Arriving()
+mixed = []
+for a, b in zip(_face.offer(default), _face.offer(other)):
+    mixed += [a, b]
+result = [coming.take(p) for p in mixed]
+assert all(r is None or r in (default, other) for r in result)
+ok("and two arriving at once cannot be spliced into one that belongs to nobody")
+
+# it is kept beside the keypair
+with _tmp.TemporaryDirectory() as room:
+    where = _os.path.join(room, "id.faces.json")
+    book = _face.Faces().load(where)
+    assert book.own(me_addr) == default, "no picture set means the default"
+    book.set_mine(_face.identicon("something else"))
+    assert book.learn("d4e5f6", other)
+    assert not book.learn("d4e5f6", other), "the same picture twice is not news"
+    back = _face.Faces().load(where)
+    assert back.mine == book.mine and back.of("d4e5f6") == other
+    assert back.of("999999") == _face.identicon("999999")
+    ok("a face is kept beside the keypair and read back, theirs and yours")
+
+# the mark rides on a heartbeat; the picture does not
+worn = p.presence("a1b2c3", Status.ONLINE, {}, app="@31.14c", face="b5c9b9")
+assert worn.field_str(6) == "@31.14c" and worn.field_str(7) == "b5c9b9"
+alone = p.presence("a1b2c3", Status.ONLINE, {}, face="b5c9b9")
+assert alone.field_str(7) == "b5c9b9", "a face with no app still lands right"
+cost = (cfg4.airtime_of(p.seal(worn, kr4, GROUP).size)
+        - cfg4.airtime_of(p.seal(p.presence("a1b2c3", Status.ONLINE, {}), kr4, GROUP).size))
+assert cost < 60, cost
+ok(f"the mark rides on the heartbeat for {cost:.0f} ms; the picture is asked for")
+
+
+# ---------- an address has to be too long to grind ----------
+from loraline.crypto import ADDRESS_BYTES as _BYTES
+
+# Everything here checks a signature against an address, so a keypair whose
+# address matches somebody else's is a licence to write in their name. Being
+# on a radio is no defence at all: the grinding happens offline with nothing
+# transmitted.
+#
+# It was three bytes. Twenty-four bits is sixteen million addresses and an
+# ordinary laptop makes twenty thousand keypairs a second, so a collision was
+# about six minutes of work.
+assert _BYTES * 8 >= 64, f"{_BYTES * 8} bits is grindable"
+made = Identity()
+assert len(made.address) == _BYTES * 2
+space = 16 ** len(made.address)
+a_second = 20000                       # keypairs, measured on an ordinary laptop
+years = space / 2 / a_second / 86400 / 365
+assert years > 1e6, years
+ok(f"an address is {_BYTES*8} bits: {years:.0e} years to grind one, at 20k keys a second")
+
+# and it is still both halves, so a signing key cannot be invented
+import base64 as _b64
+from loraline.crypto import address_of as _address_of
+other = Identity()
+mine_public = _b64.b64decode(made.public_b64)
+their_verify = _b64.b64decode(other.verify_b64)
+assert _address_of(mine_public, their_verify) != made.address
+ok("and it is still the hash of both keys, so neither half can be swapped")
+
 print("\nALL PASS")
