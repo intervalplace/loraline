@@ -142,6 +142,7 @@ class Peer:
     typing: dict[str, float] = field(default_factory=dict)
     heard_on: set = field(default_factory=set)   # which bearers carried them
     known_key: bool = False
+    app: str = ""                 # whatever is riding on loraline says of them
 
     @property
     def label(self) -> str:
@@ -206,6 +207,7 @@ class Session:
         self._pending: list[Frame] = []
         self._force_heartbeat = True
         self._send_hello = True
+        self.app_state = ""           # ridden along by whatever sits on top
         self._hello_reply_requested = False   # ask peers to hello back
 
     # -- roster ------------------------------------------------------------
@@ -331,6 +333,18 @@ class Session:
             events.append(PresenceEvent())
         return events
 
+    def set_app_state(self, text: str) -> None:
+        """What to carry on the next heartbeat, for whatever is riding on top.
+
+        A heartbeat goes out anyway, so a short string inside it is free. Sent
+        at once when it changes, because a position nobody has heard about is
+        not a position.
+        """
+        text = proto.sanitize(text)[:40]
+        if text != self.app_state:
+            self.app_state = text
+            self._force_heartbeat = True
+
     def _on_presence(self, frame: Frame, peer: Peer, was_offline: bool,
                      now: float) -> list[Event]:
         try:
@@ -344,6 +358,10 @@ class Session:
             peer.nick = frame.field_str(3) or peer.nick
             peer.colour = frame.field_int(4, 1) % len(PALETTE)
             peer.psm = frame.field_str(5)
+        # Whatever is riding on loraline, which is on every form of heartbeat
+        # because it is the thing that changes often.
+        if len(frame.fields) > 6:
+            peer.app = frame.field_str(6)
         if peer.address in self.conversations:
             self.conversations[peer.address].title = peer.label
 
@@ -653,7 +671,7 @@ class Session:
         """A representative heartbeat, for costing before anything is sent."""
         return proto.presence(self.address, self.status, self.acks,
                               self.nick, self.colour, self.psm,
-                              lost=self._lost_wire())
+                              lost=self._lost_wire(), app=self.app_state)
 
     def pace_heartbeat(self, cost_ms: float, allowance_ms_per_hour: float,
                        share: float = 0.4) -> str | None:
@@ -734,7 +752,7 @@ class Session:
             beat = proto.presence(
                 self.address, self.status, self.acks,
                 *( (self.nick, self.colour, self.psm) if full else () ),
-                lost=self._lost_wire(),
+                lost=self._lost_wire(), app=self.app_state,
             )
             if offer(beat, GROUP):
                 self.last_heartbeat = now

@@ -157,7 +157,8 @@ def message(src: str, dst: str, seq: int, ack: int,
 def presence(src: str, status: Status, acks: dict[str, int],
              nick: str | None = None, colour: int | None = None,
              psm: str | None = None,
-             lost: dict[str, set[int]] | None = None) -> Frame:
+             lost: dict[str, set[int]] | None = None,
+             app: str = "") -> Frame:
     """A heartbeat. Identity fields are optional and usually omitted.
 
     Presence is the most frequent thing on the air, so it is also the most
@@ -165,10 +166,20 @@ def presence(src: str, status: Status, acks: dict[str, int],
     them every minute wastes airtime on a channel that has very little. The
     short form is roughly half the size; receivers keep the last values they
     were told.
+
+    `app` is a scratch field for whatever is riding on loraline: a position, a
+    state, anything short. It goes on every heartbeat including the short form,
+    because a heartbeat is already being sent and a few more characters inside
+    it cost nothing. It is kept separate from the personal message so an
+    application cannot clobber what a person typed.
     """
     fields = [src, status.value, encode_acks(acks, lost)]
     if nick is not None:
         fields += [nick, str(colour or 0), psm or ""]
+    if app:
+        while len(fields) < 6:
+            fields.append("")
+        fields.append(app)
     return Frame("P", fields)
 
 

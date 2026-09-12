@@ -208,6 +208,12 @@ def cmd_link(args) -> int:
 
 
 def main(argv=None) -> int:
+    # Launched with nothing to say, open the app. Somebody who double clicks
+    # a thing is not asking for a usage message.
+    if not (argv if argv is not None else sys.argv[1:]):
+        from .app import main as app_main
+        return app_main()
+
     parser = argparse.ArgumentParser(prog="loraline")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
