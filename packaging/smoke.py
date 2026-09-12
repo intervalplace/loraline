@@ -88,7 +88,8 @@ def main() -> int:
     print(f"starting {app} ({app.stat().st_size / 1e6:.1f} MB)")
 
     room = tempfile.mkdtemp()
-    env = dict(os.environ, HOME=room, USERPROFILE=room, BROWSER="echo")
+    env = dict(os.environ, HOME=room, USERPROFILE=room, BROWSER="echo",
+               LORALINE_NO_BROWSER="1")
     process = subprocess.Popen([str(app)], env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     started = time.time()
