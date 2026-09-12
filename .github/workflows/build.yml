@@ -1,0 +1,122 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS (Apple silicon)
+            artifact: loraline-mac-apple-silicon
+          - os: macos-13
+            label: macOS (Intel)
+            artifact: loraline-mac-intel
+          - os: windows-latest
+            label: Windows
+            artifact: loraline-windows
+          - os: ubuntu-22.04
+            label: Linux
+            artifact: loraline-linux
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: loraline
+
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: intervalplace/catacomms
+          path: catacomms
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: intervalplace/longshore
+          path: longshore
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: intervalplace/hearsay
+          path: hearsay
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install what it needs
+        working-directory: loraline
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyserial pynacl pyinstaller pillow
+
+      - name: Test before building anything
+        working-directory: loraline
+        run: |
+          python tests.py
+          python tests_bridge.py
+
+      - name: Test whatever is riding along
+        shell: bash
+        run: |
+          for rider in catacomms longshore hearsay; do
+            if [ -f "$rider/tests.py" ]; then
+              echo "--- $rider"
+              (cd "$rider" && PYTHONPATH=../loraline python tests.py)
+            fi
+          done
+
+      - name: Build
+        working-directory: loraline
+        run: pyinstaller --clean --noconfirm loraline.spec
+
+      - name: Check it actually starts, and carries everything
+        shell: bash
+        working-directory: loraline
+        env:
+          SMOKE_TIMEOUT: "90"
+        run: python packaging/smoke.py
+
+      - name: Wrap it up
+        shell: bash
+        working-directory: loraline
+        run: |
+          mkdir -p out
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent "dist/loraline.app" "out/${{ matrix.artifact }}.zip"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "out/${{ matrix.artifact }}.zip" "./dist/loraline.exe"
+          else
+            chmod +x dist/loraline
+            tar -czf "out/${{ matrix.artifact }}.tar.gz" -C dist loraline
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: loraline/out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloads
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: downloads/**/*
+          generate_release_notes: true
