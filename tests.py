@@ -452,4 +452,18 @@ their_verify = _b64.b64decode(other.verify_b64)
 assert _address_of(mine_public, their_verify) != made.address
 ok("and it is still the hash of both keys, so neither half can be swapped")
 
+
+# ---------- the app has what it imports ----------
+# A missing import inside a rarely-taken branch is invisible until somebody
+# takes that branch, and on a build server that is the first thing that
+# happens. Compiling every module catches it in a second.
+import py_compile as _pyc
+import pathlib as _path
+for _module in sorted(_path.Path("loraline").glob("*.py")):
+    _pyc.compile(str(_module), doraise=True)
+import importlib as _imp
+for _name in ("app", "service", "host", "face", "detect", "settings"):
+    _imp.import_module(f"loraline.{_name}")
+ok("every module compiles and imports on its own")
+
 print("\nALL PASS")
