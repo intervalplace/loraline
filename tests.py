@@ -196,4 +196,159 @@ for sf in (7, 10, 12):
     print(f"  SF{sf}: 40 chars = {cfg.airtime_of(plain.size):7.0f} ms clear, "
           f"{cfg.airtime_of(enc.size):7.0f} ms encrypted")
 print(f"\n  payload budget: {p.payload_budget()} B clear, {p.payload_budget(kr)} B encrypted")
+
+# ---------- a scratch field for whatever rides on loraline ----------
+bus4 = Bus()
+one4 = Node("one", "k", bus4)
+two4 = Node("two", "k", bus4)
+t4 = 0.0
+for _ in range(3):
+    t4 += 1; bus4.step(t4, [one4, two4])
+
+one4.session.set_app_state("@31.14c")
+t4 += 1; bus4.step(t4, [one4, two4])
+assert two4.session.peers[one4.addr].app == "@31.14c"
+ok("an application's state rides on the heartbeat that was going out anyway")
+
+one4.session.set_psm("back in five")
+one4.session.set_app_state("@32.14!:pike:94")
+t4 += 1; bus4.step(t4, [one4, two4])
+seen4 = two4.session.peers[one4.addr]
+assert seen4.psm == "back in five" and seen4.app == "@32.14!:pike:94"
+ok("and does not clobber what the person typed as their personal message")
+
+plain = p.presence(one4.addr, Status.ONLINE, {})
+carried = p.presence(one4.addr, Status.ONLINE, {}, app="@31.14c")
+cfg4 = RadioConfig(sf=7)
+kr4 = Keyring(Identity(), "k")
+cost = (cfg4.airtime_of(p.seal(carried, kr4, GROUP).size)
+        - cfg4.airtime_of(p.seal(plain, kr4, GROUP).size))
+assert cost < 40, cost
+ok(f"which costs {cost:.0f} ms on a frame that was already being sent")
+
+
+# ---------- finding the radio without being told where it is ----------
+import types as _types
+from loraline import detect as _detect, settings as _settings
+
+class _Port:
+    def __init__(self, device, description="", manufacturer="", product=""):
+        self.device, self.description = device, description
+        self.manufacturer, self.product = manufacturer, product
+
+_fake = [_Port("/dev/cu.Bluetooth-Incoming-Port", "n/a"),
+         _Port("/dev/tty.usbserial-0001", "USB Serial"),
+         _Port("/dev/cu.usbserial-0001", "USB Serial", "1a86"),
+         _Port("/dev/cu.usbmodem14201", "Some Board")]
+_lp = _types.ModuleType("serial.tools.list_ports")
+_lp.comports = lambda: _fake
+_tools = sys.modules.setdefault("serial.tools", _types.ModuleType("serial.tools"))
+_tools.list_ports = _lp
+sys.modules["serial.tools.list_ports"] = _lp
+
+import unittest.mock as _mock
+with _mock.patch.object(sys, "platform", "darwin"):
+    seen = _detect.candidates()
+    names = [f.port for f in seen]
+assert not any("Bluetooth" in n for n in names)
+assert not any("/dev/tty." in n for n in names), "the tty twin blocks for ever on macOS"
+assert names[0] == "/dev/cu.usbserial-0001", names
+ok("the serial ports are narrowed and sorted without anybody being asked")
+
+_answers = {"/dev/cu.usbserial-0001"}
+_real_answers = _detect.answers
+_detect.answers = lambda port, wait=0.4: port in _answers
+with _mock.patch.object(sys, "platform", "darwin"):
+    assert _detect.only_one().port == "/dev/cu.usbserial-0001"
+    _answers.add("/dev/cu.usbmodem14201")
+    assert _detect.only_one() is None, "two radios means the person chooses"
+    _answers.clear()
+    _fake[:] = [_Port("/dev/cu.usbserial-0001", "USB Serial")]
+    assert _detect.only_one().port == "/dev/cu.usbserial-0001", "one port is worth a try"
+    _fake[:] = []
+    assert _detect.only_one() is None
+_detect.answers = _real_answers
+ok("one answer is picked, two are offered, none is admitted to")
+
+# ---------- what the app remembers ----------
+import tempfile as _tmp, os as _os
+with _tmp.TemporaryDirectory() as _room:
+    where = _os.path.join(_room, "settings.json")
+    assert not _settings.load(where).ready
+    kept = _settings.Settings(nick="hank", passphrase="the usual", band="eu868")
+    assert kept.ready and kept.preset()["channel"] == 18
+    _settings.save(kept, where)
+    back = _settings.load(where)
+    assert back.nick == "hank" and back.configured
+    assert oct(_os.stat(where).st_mode)[-3:] == "600", "it has a passphrase in it"
+    open(where, "w").write("not json")
+    assert not _settings.load(where).ready
+ok("settings are remembered once, kept private, and survive being corrupted")
+
+
+# ---------- everything on one radio ----------
+from loraline import host as _host
+
+class _Toy(_host.Panel):
+    tag, title, route, always = "toy", "Toy", "/toy", True
+    def __init__(self):
+        self.heard_it, self.ticked, self.orders = [], 0, []
+    def heard(self, src, payload): self.heard_it.append((src, payload))
+    def tick(self, now): self.ticked += 1
+    def handle(self, order): self.orders.append(order)
+    def snapshot(self): return {"ticked": self.ticked}
+    def page(self): return "<html><body>toy</body></html>"
+
+toy = _Toy()
+assert toy.snapshot() == {"ticked": 0}
+toy.tick(0.0); toy.heard("abc123", "hello"); toy.handle({"do": "x"})
+assert toy.ticked == 1 and toy.heard_it == [("abc123", "hello")]
+ok("a panel is four methods, none of them required")
+
+bar = _host.nav_html([toy], "/toy")
+assert 'aria-current="page">Toy<' in bar
+assert ">chat</a>" in bar
+assert "Toy running" in bar, "an always-on panel says so"
+bar = _host.nav_html([toy], "/")
+assert 'aria-current="page">chat<' in bar
+ok("the switcher is built once and knows which page it is on")
+
+# a panel that explodes must not take the radio down with it
+class _Broken(_host.Panel):
+    tag, title, route = "broken", "Broken", "/broken"
+    def tick(self, now): raise RuntimeError("no")
+    def snapshot(self): raise RuntimeError("still no")
+    def page(self): raise RuntimeError("never")
+
+assert _host.nav_html([_Broken()], "/") .count("<a") == 2
+ok("a panel that cannot draw itself is still in the list")
+
+
+# ---------- staying on ----------
+from loraline import service as _service
+
+auto = _service.Autostart()
+where = auto.where
+assert where.name and where.parent.name, where
+body = auto.body()
+assert body.strip(), "there has to be something to write"
+run = _service.command()
+assert run and all(isinstance(a, str) for a in run)
+# Whatever the platform writes, the command to start again has to be in it.
+assert all(part in body for part in run[:1]), (run, body[:120])
+ok(f"autostart is one file, {auto.describe()}")
+
+# a second copy stands down rather than fighting for the port
+import socket as _socket
+held = _socket.socket()
+held.bind(("127.0.0.1", 0))
+held.listen(1)
+taken = held.getsockname()[1]
+assert not _service.only_one(taken), "something is listening there"
+held.close()
+free = _socket.socket(); free.bind(("127.0.0.1", 0))
+spare = free.getsockname()[1]; free.close()
+assert _service.only_one(spare)
+ok("a second copy finds the first rather than fighting it for the radio")
+
 print("\nALL PASS")
