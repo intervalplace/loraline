@@ -155,6 +155,8 @@ def only_one(port: int) -> bool:
 def raise_window(port: int) -> None:
     """Bring the one that is already running to the front."""
     import webbrowser
+    if os.environ.get("LORALINE_NO_BROWSER"):
+        return
     try:
         webbrowser.open(f"http://127.0.0.1:{port}")
     except Exception:

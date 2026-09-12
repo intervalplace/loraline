@@ -14,6 +14,7 @@ wrong with the radio.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -532,10 +533,14 @@ class App:
             threading.Thread(target=self._bring_up, daemon=True).start()
         else:
             self.look_for_radio()
-        try:
-            webbrowser.open(f"http://127.0.0.1:{self.port}")
-        except Exception:
-            pass
+        # BROWSER=echo is a Unix convention and means nothing on macOS or
+        # Windows, where this would try to open a real browser on a machine
+        # that has none. A build server is exactly that machine.
+        if not os.environ.get("LORALINE_NO_BROWSER"):
+            try:
+                webbrowser.open(f"http://127.0.0.1:{self.port}")
+            except Exception:
+                pass
         print(f"loraline is at http://127.0.0.1:{self.port}")
         while self.running:
             now = time.time()
