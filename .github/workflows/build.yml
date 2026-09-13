@@ -12,27 +12,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.pick.outputs.targets }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          LINUX='{"os":"ubuntu-22.04","label":"Linux","artifact":"loraline-linux"}'
+          MAC_ARM='{"os":"macos-14","label":"macOS (Apple silicon)","artifact":"loraline-mac-apple-silicon"}'
+          MAC_INTEL='{"os":"macos-13","label":"macOS (Intel)","artifact":"loraline-mac-intel"}'
+          WINDOWS='{"os":"windows-latest","label":"Windows","artifact":"loraline-windows"}'
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "targets=[$MAC_ARM,$MAC_INTEL,$WINDOWS,$LINUX]" >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=[$LINUX]" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: plan
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || matrix.os == 'ubuntu-22.04' }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-14
-            label: macOS (Apple silicon)
-            artifact: loraline-mac-apple-silicon
-          - os: macos-13
-            label: macOS (Intel)
-            artifact: loraline-mac-intel
-          - os: windows-latest
-            label: Windows
-            artifact: loraline-windows
-          - os: ubuntu-22.04
-            label: Linux
-            artifact: loraline-linux
+        include: ${{ fromJSON(needs.plan.outputs.targets) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -99,10 +105,8 @@ jobs:
         run: |
           echo "--- dist"
           ls -la dist || echo "no dist at all"
-          echo "--- python"
           python -c "import sys; print(sys.version)"
           python -c "import serial, nacl; print('deps import fine')" || true
-          echo "--- what the app says when run directly"
           LORALINE_NO_BROWSER=1 timeout 20 python -m loraline || true
 
       - name: Wrap it up
