@@ -7,10 +7,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || matrix.os == 'ubuntu-22.04' }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +91,19 @@ jobs:
         env:
           SMOKE_TIMEOUT: "90"
         run: python packaging/smoke.py
+
+      - name: If that failed, show what is there
+        if: failure()
+        shell: bash
+        working-directory: loraline
+        run: |
+          echo "--- dist"
+          ls -la dist || echo "no dist at all"
+          echo "--- python"
+          python -c "import sys; print(sys.version)"
+          python -c "import serial, nacl; print('deps import fine')" || true
+          echo "--- what the app says when run directly"
+          LORALINE_NO_BROWSER=1 timeout 20 python -m loraline || true
 
       - name: Wrap it up
         shell: bash
