@@ -480,4 +480,41 @@ for _name in ("app", "service", "host", "face", "detect", "settings"):
     _imp.import_module(f"loraline.{_name}")
 ok("every module compiles and imports on its own")
 
+
+# ---------- the open channel ----------
+from loraline import settings as _open
+
+# You cannot agree a phrase with somebody you have not met, so there is one
+# everybody knows. It is not private and must never be arrived at by accident.
+assert not _open.Settings().open_channel, "a fresh install is not on it"
+assert not _open.Settings(passphrase="the usual").open_channel
+assert _open.Settings(passphrase=_open.OPEN_PHRASE).open_channel
+assert _open.is_open("  " + _open.OPEN_PHRASE + "  "), "stray spaces should not matter"
+ok("the open channel is a phrase anybody knows, and never the default")
+
+plain = _host.nav_html([toy], "/", False)
+loud = _host.nav_html([toy], "/", True)
+assert '<div id="loraline-open">' not in plain
+assert '<div id="loraline-open">' in loud
+assert "read this" in loud
+ok("and every page says so while you are on it, not a setting you chose once")
+
+
+# ---------- a slower beat in a crowd does not slow anything down ----------
+from loraline.session import CROWD_S as _CROWD
+
+crowd = Session("hank", Identity(), kr4)
+class _Here:
+    status = Status.ONLINE
+crowd.peers = {n: _Here() for n in range(19)}
+assert crowd.beat_gap() >= 300, crowd.beat_gap()
+crowd.last_heartbeat = 1000.0
+crowd._force_heartbeat = False
+assert not (1001 - crowd.last_heartbeat >= crowd.beat_gap()), "sitting still waits"
+# Anything that changes goes out at once. A position nobody has heard about is
+# not a position, so the crowd gap must not delay one.
+crowd.set_app_state("@12.7c")
+assert crowd._force_heartbeat, "a change has to send immediately"
+ok(f"a crowd of twenty beats every {crowd.beat_gap():.0f} s, and a change still goes at once")
+
 print("\nALL PASS")
