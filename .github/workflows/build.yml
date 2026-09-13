@@ -22,10 +22,10 @@ jobs:
         run: |
           LINUX='{"os":"ubuntu-22.04","label":"Linux","artifact":"loraline-linux"}'
           MAC_ARM='{"os":"macos-14","label":"macOS (Apple silicon)","artifact":"loraline-mac-apple-silicon"}'
-          MAC_INTEL='{"os":"macos-13","label":"macOS (Intel)","artifact":"loraline-mac-intel"}'
+
           WINDOWS='{"os":"windows-latest","label":"Windows","artifact":"loraline-windows"}'
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "targets=[$MAC_ARM,$MAC_INTEL,$WINDOWS,$LINUX]" >> "$GITHUB_OUTPUT"
+            echo "targets=[$MAC_ARM,$WINDOWS,$LINUX]" >> "$GITHUB_OUTPUT"
           else
             echo "targets=[$LINUX]" >> "$GITHUB_OUTPUT"
           fi
