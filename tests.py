@@ -270,6 +270,20 @@ with _mock.patch.object(sys, "platform", "darwin"):
 _detect.answers = _real_answers
 ok("one answer is picked, two are offered, none is admitted to")
 
+# A module that answers nothing is still very probably the radio. These are
+# transparent bridges: what you write goes over the air, so there is nothing
+# on the far end that owes you an OK. Treating silence as a fault threw away a
+# working radio while the terminal client was talking on the same port.
+_fake[:] = [_Port("/dev/cu.usbmodem5B610966611", "USB Serial"),
+            _Port("/dev/cu.usbmodem5B610966561", "USB Serial")]
+_detect.answers = lambda port, wait=0.4: False
+with _mock.patch.object(sys, "platform", "darwin"):
+    silent = _detect.find()
+assert len(silent) == 2 and not any(f.answered for f in silent)
+assert all(f.port for f in silent), "both are still offered"
+_detect.answers = _real_answers
+ok("and two silent ports are both still offered, because silence is normal")
+
 # ---------- what the app remembers ----------
 import tempfile as _tmp, os as _os
 with _tmp.TemporaryDirectory() as _room:
