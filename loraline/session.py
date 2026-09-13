@@ -24,6 +24,16 @@ from .crypto import GROUP, Identity, Keyring
 from .protocol import Delivery, Frame, Status, seq_newer
 
 HEARTBEAT_S = 60.0
+
+# How much air one person's heartbeats may take. Everybody announces
+# themselves, so the noise grows with the group while the channel does not: at
+# ten people on a minute each it is 3.6% occupied and better than one frame in
+# eight collides with another. Slowing down as people arrive keeps that flat,
+# at the cost of knowing a little less precisely who is about.
+#
+# Fifteen seconds a person means four people check in every minute and twenty
+# people every five, and the channel sees the same load either way.
+CROWD_S = 15.0
 PEER_TIMEOUT_S = 155.0
 IDLE_TO_AWAY_S = 300.0
 TYPING_LOCKOUT_S = 5.0
@@ -335,6 +345,22 @@ class Session:
             events.append(PresenceEvent())
         return events
 
+    def beat_gap(self) -> float:
+        """How long to wait before checking in again.
+
+        Longer when there are more people, because everybody's heartbeats
+        share one channel. What this costs is precision about who is online;
+        what it buys is that chat still works in a crowd.
+        """
+        here = 1 + sum(1 for p in self.peers.values()
+                       if p.status is not Status.OFFLINE)
+        return max(self.heartbeat_s, CROWD_S * here)
+
+    def gone_after(self) -> float:
+        """How long somebody can be quiet before they count as away. Has to
+        follow the heartbeat, or a slow crowd looks like an empty room."""
+        return max(self.peer_timeout_s, self.beat_gap() * 2.6)
+
     def set_face_mark(self, text: str) -> None:
         """Which picture we have. Six characters on a heartbeat that was going
         out anyway; the picture itself is asked for."""
@@ -558,13 +584,13 @@ class Session:
         for peer in self.peers.values():
             if (
                 peer.last_seen is not None
-                and now - peer.last_seen > self.peer_timeout_s
+                and now - peer.last_seen > self.gone_after()
                 and peer.status is not Status.OFFLINE
             ):
                 peer.status = Status.OFFLINE
                 peer.last_seen = None
                 peer.rssi_dbm = None
-                quiet = self.peer_timeout_s
+                quiet = self.gone_after()
                 spell = (f"{quiet / 60:.0f} minutes" if quiet >= 90
                          else f"{quiet:.0f} seconds")
                 events.append(SystemEvent(
@@ -758,7 +784,7 @@ class Session:
                 self._hello_reply_requested = False
                 self.last_hello_sent = now
 
-        if self._force_heartbeat or (now - self.last_heartbeat >= self.heartbeat_s):
+        if self._force_heartbeat or (now - self.last_heartbeat >= self.beat_gap()):
             # Carry identity when it has changed, and periodically anyway so a
             # peer who joined late catches up without having to ask.
             full = self._identity_dirty or self.beats_sent % 10 == 0

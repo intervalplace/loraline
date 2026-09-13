@@ -170,11 +170,14 @@ NAV_STYLE = """
 #loraline-nav a[aria-current]{background:#b01b62;color:#fff}
 #loraline-nav .mark{color:#ea8fb4;margin-right:.5rem;letter-spacing:-1px}
 #loraline-nav .on{margin-left:auto;color:#7f7a72;font-size:11px}
+#loraline-open{position:sticky;top:0;z-index:98;padding:.3rem .6rem;
+  background:#5a1226;color:#f0c8d4;font:12px ui-monospace,Menlo,monospace;
+  border-bottom:1px solid #000;text-align:center}
 </style>
 """
 
 
-def nav_html(panels, here: str) -> str:
+def nav_html(panels, here: str, open_channel: bool = False) -> str:
     links = [('<a href="/"%s>chat</a>'
               % (' aria-current="page"' if here in ("", "/") else ""))]
     for panel in panels:
@@ -183,5 +186,11 @@ def nav_html(panels, here: str) -> str:
     running = [p.title for p in panels if p.always]
     tail = (f'<span class="on">{", ".join(running)} running</span>'
             if running else "")
+    # On the open channel this has to say so on every page, not once in a
+    # setting somebody chose an hour ago. Posting to strangers should never be
+    # something you have forgotten you are doing.
+    warning = ('<div id="loraline-open">On the open channel. '
+               'Anybody in range can read this.</div>') if open_channel else ""
     return (NAV_STYLE + '<div id="loraline-nav"><span class="mark">'
-            '&#x2571;&#x2571;&#x2572;</span>' + "".join(links) + tail + "</div>")
+            '&#x2571;&#x2571;&#x2572;</span>' + "".join(links) + tail
+            + "</div>" + warning)

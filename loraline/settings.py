@@ -15,6 +15,25 @@ from pathlib import Path
 
 DEFAULT_PATH = Path.home() / ".loraline" / "settings.json"
 
+# The one passphrase everybody knows.
+#
+# You cannot agree a phrase with somebody you have not met, which leaves no
+# way to find out whether anybody is on a radio near you. This is that way:
+# a channel anybody can join, for hearing who is about.
+#
+# It is not private and it is not meant to be. Everything on it can be read by
+# anybody in range with this program: your messages, your face, your address,
+# where you are standing in longshore. It is a noticeboard in a square.
+#
+# It is never the default. Somebody who opens this for the first time and says
+# hello must not be broadcasting to strangers because of a setting they did
+# not choose.
+OPEN_PHRASE = "open channel, anyone can read this"
+
+
+def is_open(passphrase: str) -> bool:
+    return (passphrase or "").strip() == OPEN_PHRASE
+
 BANDS = {
     "eu868": dict(label="Europe, UK, Norway (868 MHz)",
                   channel=18, sf=7, power=8, duty=0.01),
@@ -32,6 +51,10 @@ class Settings:
     band: str = ""
     port: str = ""            # blank means look for it every time
     configured: bool = False
+
+    @property
+    def open_channel(self) -> bool:
+        return is_open(self.passphrase)
 
     @property
     def ready(self) -> bool:

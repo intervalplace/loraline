@@ -157,12 +157,12 @@ class App:
         Not on a page a panel serves under its own prefix: a document being
         read wants to be a document, and the reader carries its own way back.
         """
-        if not self.panels:
+        if not self.panels and not self.settings.open_channel:
             return page
         if not any(here.rstrip("/") == p.route.rstrip("/") for p in self.panels) \
            and here.rstrip("/") != "/":
             return page
-        bar = hosting.nav_html(self.panels, here)
+        bar = hosting.nav_html(self.panels, here, self.settings.open_channel)
         marker = "<body>"
         if marker in page:
             return page.replace(marker, marker + bar, 1)
@@ -388,7 +388,9 @@ class App:
             "bands": [{"key": k, "label": v["label"]} for k, v in store.BANDS.items()],
             "settings": {"nick": self.settings.nick, "band": self.settings.band,
                          "port": self.settings.port,
-                         "configured": self.settings.configured},
+                         "configured": self.settings.configured,
+                         "open": self.settings.open_channel,
+                         "open_phrase": store.OPEN_PHRASE},
             "log": [{"text": t, "role": r} for _, t, r in self.log[-60:]],
             "panels": [{"tag": p.tag, "title": p.title, "route": p.route,
                         "always": p.always} for p in self.panels],
@@ -650,6 +652,8 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
+button.plain{background:none;border:0;padding:0;font:inherit;color:var(--mark);
+  text-decoration:underline;cursor:pointer}
 canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid var(--rule);
   border-radius:2px;background:var(--panel);flex:none}
 .who{display:flex;gap:.5rem;align-items:center}
@@ -720,6 +724,12 @@ function setup(){
 
     <button class="go" type="button" onclick="begin()">Start</button>
   </div>`;
+}
+
+function openChannel(){
+  const box = document.getElementById('pass');
+  box.value = (state.settings || {}).open_phrase || '';
+  box.type = 'text';                 // it is not a secret, so do not hide it
 }
 
 function begin(){
