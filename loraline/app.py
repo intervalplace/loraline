@@ -202,11 +202,10 @@ class App:
             self.busy = ""
             if not found:
                 self.trouble = ("No serial ports at all. Is it plugged in? "
-                                "Some cables are power only.")
-            elif not any(f.answered for f in found):
-                self.trouble = ("Found a port but nothing answered. It may need "
-                                "its driver, or it may be a different device.")
+                                "Some cables carry power and no data.")
             else:
+                # Silence is normal. Most of these modules are transparent and
+                # answer nothing, so a quiet port is not a broken one.
                 self.trouble = ""
             self.publish(self.snapshot())
           except Exception as exc:
@@ -265,17 +264,16 @@ class App:
         # Beside the keypair, because that is what a face belongs to.
         self.faces.load(str(crypto.DEFAULT_PATH) + ".faces.json")
         bearers = []
-        if chosen and not detect.answers(chosen):
-            # Applying a band to something that is not a radio takes nine
-            # seconds of sending AT into the dark and then reports success,
-            # which is worse than failing. Say so, and carry on without it:
-            # refusing to start leaves somebody with a blank window and no way
-            # to change their mind.
-            self.trouble = (f"{chosen} did not answer, so this is not on the air. "
-                            f"It may be the wrong port, or the module may need "
-                            f"its driver. Everything else still works.")
-            self.note(f"{chosen} did not answer; carrying on without a radio", "warn")
-            chosen = ""
+        # A module that does not answer AT is still very probably the radio.
+        #
+        # These are transparent bridges: what you write goes out over the air,
+        # so there is nothing on the other end that owes you an OK. Refusing
+        # to open a port on that basis threw away a working radio, while the
+        # command line client was happily talking on the same one.
+        #
+        # So the probe is a hint about which port to try first, and never a
+        # reason not to try.
+        quiet = bool(chosen) and not detect.answers(chosen)
         if chosen:
             try:
                 self.busy = "telling the radio which band"
@@ -286,8 +284,14 @@ class App:
                 radio.apply_config(verbose=False)
                 bearers.append(radio)
                 self.note(f"Radio ready on {chosen}, {preset['label']}.")
+                if quiet:
+                    self.note("It did not answer AT, which most of these do "
+                              "not. If nobody appears, try the other port.")
             except Exception as exc:
-                self.trouble = f"Could not open {chosen}: {exc}"
+                # This is the honest failure: the port would not open at all.
+                self.trouble = (f"Could not open {chosen}: {exc}. "
+                                f"Something else may be holding it, or it may "
+                                f"be the wrong port.")
                 self.busy = ""
                 self.publish(self.snapshot())
                 return
@@ -705,9 +709,9 @@ function setup(){
         : '<option value="">nothing found</option>'}
     </select>
     <p class="hint">
-      ${answered.length === 1 ? 'Found it.' :
-        answered.length > 1 ? 'More than one answered. Pick whichever you meant.' :
-        'Nothing answered yet.'}
+      ${ports.length === 1 ? 'One found.' :
+        ports.length > 1 ? 'More than one. If the first does not work, try the other.' :
+        'Nothing found yet.'}
       <button class="small" type="button" onclick="send({do:'look'})">look again</button>
     </p>
 
