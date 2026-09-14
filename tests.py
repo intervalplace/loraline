@@ -517,4 +517,21 @@ crowd.set_app_state("@12.7c")
 assert crowd._force_heartbeat, "a change has to send immediately"
 ok(f"a crowd of twenty beats every {crowd.beat_gap():.0f} s, and a change still goes at once")
 
+
+# ---------- one band table ----------
+from loraline.settings import BANDS as _BANDS
+from loraline.__main__ import BANDS as _CLI_BANDS
+from loraline.protocol import DutyBudget as _Duty
+
+# There were two of these and they disagreed about what the number meant:
+# duty=1.0 was a one percent limit in one and no limit at all in the other.
+assert _BANDS is _CLI_BANDS, "the terminal and the app must read the same table"
+assert _Duty(_BANDS["eu868"]["duty"]).remaining_ms() == 36000.0, "EU is 1% of the hour"
+assert _Duty(_BANDS["us915"]["duty"]).remaining_ms() == float("inf")
+assert _Duty(_BANDS["au915"]["duty"]).remaining_ms() == float("inf")
+for _name, _b in _BANDS.items():
+    assert _b["power_dbm"] == _b["power"], _name
+    assert _b.get("note") and _b.get("label"), _name
+ok("one band table: EU is 36 s an hour, the 915 bands have no limit")
+
 print("\nALL PASS")
