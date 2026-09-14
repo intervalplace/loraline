@@ -334,6 +334,7 @@ class Link:
         self.interfaces = interfaces
         self.keyring = keyring
         self.bridge = bridge
+        self._heard: list = []         # raw lines heard, for a trace
         self._seen: deque[int] = deque(maxlen=DEDUP_MEMORY)
         self._seen_set: set[int] = set()
         self._connections: dict[str, int] = {}
@@ -385,6 +386,11 @@ class Link:
             self._connections[iface.name] = count
         return changed
 
+    def take_seen(self) -> list:
+        """Raw lines heard since last asked, each with whether it decoded."""
+        out, self._heard = self._heard, []
+        return out
+
     def pump(self) -> tuple[list[Frame], list[Exception]]:
         frames: list[Frame] = []
         errors: list[Exception] = []
@@ -405,6 +411,13 @@ class Link:
                     self._relay(item)
 
                 frame = proto.decode_line(item.line, self.keyring)
+                # Kept only so a trace can say whether the radio is hearing
+                # anything at all. A line that will not decode is either
+                # somebody else's passphrase or somebody else's protocol, and
+                # either way it is not silence.
+                self._heard.append((item.line, frame is not None))
+                if len(self._heard) > 64:
+                    del self._heard[:-64]
                 if frame is not None:
                     frame.rssi_raw = item.rssi_raw
                     frame.via = item.interface

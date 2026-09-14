@@ -184,6 +184,17 @@ class Keyring:
         if self.keystore is not None:
             self._load_keystore()
 
+    def rekey(self, passphrase: str) -> None:
+        """Change which conversation this can hear.
+
+        Only the group cipher changes. The identity, the peer boxes and
+        everything learned about people stay: moving rooms should not make you
+        a different person, and the people you already know are still the same
+        people if you meet them again.
+        """
+        self.group = GroupCipher(passphrase) if (passphrase and AVAILABLE) else None
+        self.failures = 0
+
     def _load_keystore(self) -> None:
         """Restore peer keys learned in earlier sessions.
 

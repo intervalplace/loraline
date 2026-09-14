@@ -34,13 +34,25 @@ OPEN_PHRASE = "open channel, anyone can read this"
 def is_open(passphrase: str) -> bool:
     return (passphrase or "").strip() == OPEN_PHRASE
 
+# One table, and `duty` is a percent of the hour: 1.0 means one percent and 0
+# means no limit.
+#
+# There were two of these, here and in __main__, and they disagreed about what
+# the number meant: 1.0 was a one percent limit in one and no limit at all in
+# the other. Nothing had gone wrong yet, which is the worst state for a thing
+# like that to be in.
 BANDS = {
     "eu868": dict(label="Europe, UK, Norway (868 MHz)",
-                  channel=18, sf=7, power=8, duty=0.01),
+                  channel=18, sf=7, power=8, duty=1.0,
+                  note="EU 868 MHz: about 14 dBm ERP and a 1% duty cycle. "
+                       "Power is low because a 6 dBi antenna adds gain on top, "
+                       "and the spreading factor is low so presence fits."),
     "us915": dict(label="United States, Canada (915 MHz)",
-                  channel=65, sf=10, power=22, duty=1.0),
+                  channel=65, sf=10, power=22, duty=0.0,
+                  note="US/Canada 902-928 MHz ISM: no duty cycle limit."),
     "au915": dict(label="Australia, New Zealand (915 MHz)",
-                  channel=65, sf=10, power=22, duty=1.0),
+                  channel=65, sf=10, power=22, duty=0.0,
+                  note="AU/NZ 915-928 MHz: full power fine."),
 }
 
 

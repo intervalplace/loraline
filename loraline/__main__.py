@@ -23,16 +23,13 @@ from .transport import (
 
 # Regional presets. Getting this wrong means transmitting a fairly strong
 # signal into somebody else's licensed spectrum, so the argument is required.
-BANDS = {
-    "eu868": dict(channel=18, power_dbm=8, duty=1.0, sf=7,
-                  note="EU 868 MHz: about 14 dBm ERP and a 1% duty cycle. Power is "
-                       "low because a 6 dBi antenna adds gain on top, and the "
-                       "spreading factor is low so presence fits the budget."),
-    "us915": dict(channel=65, power_dbm=22, duty=0.0, sf=10,
-                  note="US/Canada 902-928 MHz ISM: no duty cycle limit."),
-    "au915": dict(channel=65, power_dbm=22, duty=0.0, sf=10,
-                  note="AU/NZ 915-928 MHz: full power fine."),
-}
+# One table for everybody, in settings, so the app and the terminal cannot
+# drift apart about what a band means.
+from .settings import BANDS
+
+# The terminal calls these power_dbm; the table calls it power.
+for _preset in BANDS.values():
+    _preset.setdefault("power_dbm", _preset["power"])
 
 
 def add_radio_args(p: argparse.ArgumentParser) -> None:

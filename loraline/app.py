@@ -159,8 +159,15 @@ class App:
         """
         if not self.panels and not self.settings.open_channel:
             return page
-        if not any(here.rstrip("/") == p.route.rstrip("/") for p in self.panels) \
-           and here.rstrip("/") != "/":
+        # The chat itself, and each panel's own page, get the switcher. Pages a
+        # panel serves under a prefix of its own do not: a hearsay document
+        # being read wants to be a document.
+        #
+        # This compared here.rstrip("/") against "/", and "/".rstrip("/") is
+        # the empty string, so the chat failed its own test and lost the
+        # switcher entirely.
+        mine = {"/"} | {p.route for p in self.panels}
+        if here not in mine and here.rstrip("/") + "/" not in mine:
             return page
         bar = hosting.nav_html(self.panels, here, self.settings.open_channel)
         marker = "<body>"
@@ -279,7 +286,7 @@ class App:
                 self.busy = "telling the radio which band"
                 self.publish(self.snapshot())
                 radio = LoRaInterface(chosen, config,
-                                      duty_limit_percent=preset["duty"] * 100)
+                                      duty_limit_percent=preset["duty"])
                 radio.open()
                 radio.apply_config(verbose=False)
                 bearers.append(radio)
@@ -354,6 +361,8 @@ class App:
         elif what == "unface" and self.client is not None:
             self.set_my_face("")
             self.note("Back to the picture your address had.")
+        elif what == "room":
+            self.change_room(str(order.get("passphrase") or "").strip())
         elif what == "autostart":
             wanted = bool(order.get("on"))
             ok = self.autostart.turn_on() if wanted else self.autostart.turn_off()
@@ -459,6 +468,28 @@ class App:
             self.note(event.text, "warn" if event.level == "warn" else "muted")
         elif isinstance(event, PresenceEvent):
             self.note(event.text)
+
+    def change_room(self, passphrase: str) -> None:
+        """Move to a different conversation without becoming a different person.
+
+        Your keypair, your name and your picture are yours; the passphrase is
+        only which conversation you can hear. Changing it used to mean finding
+        settings.json and deleting it, which is not a thing to ask of anybody.
+        """
+        if not passphrase:
+            return self.note("A room needs a phrase.", "warn")
+        if passphrase == self.settings.passphrase:
+            return self.note("You are already in that one.")
+        self.settings.passphrase = passphrase
+        store.save(self.settings)
+        if self.client is not None:
+            self.client.session.peers.clear()
+            self.unread.clear()
+            self.convo = ""
+            self.client.rekey(passphrase)
+        self.note("Moved. The people here are whoever has the same phrase.",
+                  "gold" if not self.settings.open_channel else "warn")
+        self.publish(self.snapshot())
 
     # -- faces -------------------------------------------------------------
 
@@ -652,6 +683,13 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
+#roomform{margin:.2rem 0 .7rem}
+#roomform input{width:100%;background:var(--panel);border:1px solid var(--rule);
+  color:var(--ink);font:inherit;font-size:.82rem;padding:.3rem .4rem;border-radius:2px}
+.roomrow{display:flex;gap:.5rem;align-items:baseline;margin-top:.35rem}
+.roomrow button:first-child{background:var(--panel);border:1px solid var(--rule);
+  color:var(--ink);font:inherit;font-size:.8rem;padding:.2rem .6rem;
+  border-radius:2px;cursor:pointer}
 button.plain{background:none;border:0;padding:0;font:inherit;color:var(--mark);
   text-decoration:underline;cursor:pointer}
 canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid var(--rule);
@@ -726,6 +764,23 @@ function setup(){
   </div>`;
 }
 
+function showRoom(){
+  const box = document.getElementById('roomform');
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  if(box.style.display === 'block') document.getElementById('newpass').focus();
+}
+
+function joinRoom(){
+  const box = document.getElementById('newpass');
+  if(!box.value.trim()) return;
+  send({do:'room', passphrase: box.value.trim()});
+  box.value = '';
+}
+
+function joinOpen(){
+  send({do:'room', passphrase: (state.settings||{}).open_phrase || ''});
+}
+
 function openChannel(){
   const box = document.getElementById('pass');
   box.value = (state.settings || {}).open_phrase || '';
@@ -773,6 +828,21 @@ function talking(){
             ? '<br><button class="plain" type="button" onclick="send({do:\'unface\'})">back to the default</button>'
             : '<br>the one your address came with'}
         </div>
+      </div>
+      <h3>room</h3>
+      <p class="staying">
+        ${(state.settings||{}).open ? 'You are on the <b>open channel</b>.'
+          : 'You are in a private room.'}
+        <br><button class="plain" type="button" onclick="showRoom()">change room</button>
+      </p>
+      <div id="roomform" style="display:none">
+        <input id="newpass" type="password" placeholder="a different passphrase">
+        <div class="roomrow">
+          <button type="button" onclick="joinRoom()">join</button>
+          <button class="plain" type="button" onclick="joinOpen()">the open one</button>
+        </div>
+        <p class="hint">Everyone in a room needs the same phrase. Your name,
+          your picture and your keys stay as they are.</p>
       </div>
       <h3>this window</h3>
       <p class="staying">${staying()}</p>

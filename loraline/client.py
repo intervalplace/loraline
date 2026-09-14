@@ -15,6 +15,12 @@ _last_trace = [0.0]
 
 
 class Client:
+    def rekey(self, passphrase: str) -> None:
+        """Move to another conversation. Anything queued for the old one is
+        dropped, because it was addressed to people who are no longer here."""
+        self.keyring.rekey(passphrase)
+        self.session.peers.clear()
+
     def __init__(self, link: Link, identity: Identity, keyring: Keyring,
                  nick: str, psm: str = "", colour: int = 0) -> None:
         self.link = link
@@ -58,6 +64,20 @@ class Client:
             self.session.announce()
 
         frames, errors = self.link.pump()
+        # Whether anything arrives at all is the first question when two
+        # radios cannot hear each other, and the session summary below cannot
+        # answer it: a frame that fails to decrypt never becomes a peer, and
+        # looks exactly like silence.
+        if _TRACE:
+            seen = getattr(self.link, "take_seen", lambda: [])()
+            if seen or frames or errors:
+                with open(_TRACE, "a") as f:
+                    for raw, ok in seen:
+                        f.write(f"[{now:.1f}] <- {len(raw)}B "
+                                f"{'decoded' if ok else 'NOT FOR US'} "
+                                f"{raw[:48]!r}\n")
+                    for exc in errors:
+                        f.write(f"[{now:.1f}] !! {exc}\n")
         for exc in errors:
             self.error = f"interface failed: {exc}"
             events.append(SystemEvent(self.error, level="warn"))
