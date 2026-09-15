@@ -72,7 +72,9 @@ def logo() -> str:
     Falls back to ASCII where the terminal is not on a UTF-8 locale, which is
     the closest thing to a reliable test for whether those glyphs will draw.
     """
-    return "\u2571\u2571\u2572" if unicode_ok() else "//\\"
+    # The same mark the browser draws, in the one form a terminal has always
+    # had for it.
+    return "\u2022\u203f\u2022" if unicode_ok() else ":-)"
 
 
 def emote(text: str) -> str:

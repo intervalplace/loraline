@@ -168,6 +168,7 @@ NAV_STYLE = """
   border-radius:3px}
 #loraline-nav a:hover{background:#2c2a26;color:#fff}
 #loraline-nav a[aria-current]{background:#b01b62;color:#fff}
+#loraline-nav .mark svg{width:15px;height:15px;vertical-align:-3px}
 #loraline-nav .mark{color:#ea8fb4;margin-right:.5rem;letter-spacing:-1px}
 #loraline-nav .on{margin-left:auto;color:#7f7a72;font-size:11px}
 #loraline-open{position:sticky;top:0;z-index:98;padding:.3rem .6rem;
@@ -192,5 +193,7 @@ def nav_html(panels, here: str, open_channel: bool = False) -> str:
     warning = ('<div id="loraline-open">On the open channel. '
                'Anybody in range can read this.</div>') if open_channel else ""
     return (NAV_STYLE + '<div id="loraline-nav"><span class="mark">'
-            '&#x2571;&#x2571;&#x2572;</span>' + "".join(links) + tail
+            '<svg viewBox="0 0 32 32" aria-hidden="true">'
+            '<circle cx="9.4" cy="12.1" r="2.3" fill="currentColor"/><circle cx="22.6" cy="12.1" r="2.3" fill="currentColor"/><path d="M8.5 13.5 A 8.5 4.9 0 0 0 23.5 13.5" fill="none" stroke="#b01b62" stroke-width="2.1" stroke-linecap="round"/></svg>'
+            '</span>' + "".join(links) + tail
             + "</div>" + warning)
