@@ -708,7 +708,7 @@ canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid va
 </style></head><body>
 <div class="wrap">
 <header>
-  <h1><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="9.4" cy="12.1" r="2.3" fill="currentColor"/><circle cx="22.6" cy="12.1" r="2.3" fill="currentColor"/><path d="M8.5 13.5 A 8.5 4.9 0 0 0 23.5 13.5" fill="none" stroke="#b01b62" stroke-width="2.1" stroke-linecap="round"/></svg> loraline</h1>
+  <h1><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="9.4" cy="12.1" r="2.3" fill="currentColor"/><circle cx="22.6" cy="12.1" r="2.3" fill="currentColor"/><path d="M8.5 18.1 A 8.5 4.9 0 0 0 23.5 18.1" fill="none" stroke="#b01b62" stroke-width="2.1" stroke-linecap="round"/></svg> loraline</h1>
   <div class="meta" id="meta"></div>
 </header>
 <div id="body"></div>
