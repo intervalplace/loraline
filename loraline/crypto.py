@@ -179,6 +179,8 @@ class Keyring:
         self.peer_keys: dict[str, bytes] = {}
         self.verifiers: dict[str, bytes] = {}  # address -> signing key
         self.nicks: dict[str, str] = {}       # address -> last known nick
+        self.checked: set = set()             # addresses compared out loud
+        self.last_seen: dict = {}             # address -> when last heard
         self.failures = 0
         self.keystore = Path(keystore) if keystore is not None else None
         if self.keystore is not None:
@@ -227,6 +229,13 @@ class Keyring:
                 self.verifiers[address] = vraw
             if rec.get("nick"):
                 self.nicks[address] = rec["nick"]
+            if rec.get("checked"):
+                self.checked.add(address)
+            if rec.get("seen"):
+                try:
+                    self.last_seen[address] = float(rec["seen"])
+                except (TypeError, ValueError):
+                    pass
 
     def _save_keystore(self) -> None:
         if self.keystore is None:
@@ -234,13 +243,44 @@ class Keyring:
         data = {addr: {"key": base64.b64encode(raw).decode("ascii"),
                        "verify": base64.b64encode(
                            self.verifiers.get(addr, b"")).decode("ascii"),
-                       "nick": self.nicks.get(addr, "")}
+                       "nick": self.nicks.get(addr, ""),
+                       "checked": addr in self.checked,
+                       "seen": self.last_seen.get(addr, 0.0)}
                 for addr, raw in self.peer_keys.items()}
         try:
             self.keystore.parent.mkdir(parents=True, exist_ok=True)
             self.keystore.write_text(json.dumps(data))
         except Exception:
             pass          # persistence is best-effort; never break a session over it
+
+    def check_off(self, address: str, yes: bool = True) -> None:
+        """Mark that this address was compared with the person, out loud.
+
+        Keys are trusted on first contact, which means a stranger who got
+        there before the real person did is indistinguishable from them. This
+        is the one claim here that fixes that, and it cannot be made by
+        anybody but the person sitting in front of the screen.
+        """
+        if address not in self.peer_keys:
+            return
+        if yes:
+            self.checked.add(address)
+        else:
+            self.checked.discard(address)
+        self._save_keystore()
+
+    def is_checked(self, address: str) -> bool:
+        return address in self.checked
+
+    def saw(self, address: str, when: float) -> None:
+        """Note when somebody was last heard, so they can be listed while
+        they are away."""
+        if address in self.peer_keys:
+            self.last_seen[address] = when
+
+    def remembered(self) -> list:
+        """Everybody this node has ever learned, newest first."""
+        return sorted(self.peer_keys, key=lambda a: -self.last_seen.get(a, 0.0))
 
     def remember_nick(self, address: str, nick: str) -> None:
         """Record a peer's nick so it survives a restart, saving if it changed."""

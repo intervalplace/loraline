@@ -363,6 +363,14 @@ class App:
         elif what == "unface" and self.client is not None:
             self.set_my_face("")
             self.note("Back to the picture your address had.")
+        elif what == "checked" and self.client is not None:
+            who = str(order.get("who") or "")
+            self.client.keyring.check_off(who, bool(order.get("yes")))
+            name = self.client.keyring.nicks.get(who) or who[:8]
+            self.note(f"{name} is " + ("checked in person." if order.get("yes")
+                                       else "no longer marked as checked."),
+                      "gold" if order.get("yes") else "muted")
+            self.publish(self.snapshot())
         elif what == "room":
             self.change_room(str(order.get("passphrase") or "").strip())
         elif what == "autostart":
@@ -418,14 +426,43 @@ class App:
             return base
         session = self.client.session
         peers = []
+        here = set()
         for peer in sorted(session.peers.values(), key=lambda p: p.label.lower()):
+            here.add(peer.address)
             picture = self.faces.of(peer.address)
             peers.append({"address": peer.address, "name": peer.label,
                           "status": peer.status.value, "psm": peer.psm,
                           "known": peer.known_key,
+                          "checked": self.client.keyring.is_checked(peer.address),
                           "face": {"pixels": faces.unpack(picture),
                                    "colours": list(faces.colours_of(picture))},
                           "unread": self.unread.get(peer.address, 0)})
+
+        # And the people you have checked, whether or not they are here.
+        #
+        # The keystore keeps everybody's keys and always will: forgetting one
+        # is what lets somebody else take that address later. But keeping a
+        # key and showing a name are different decisions. On the open channel
+        # every stranger ever heard would otherwise pile up here for ever,
+        # until somebody who talks to you weekly and somebody who passed
+        # through in June looked the same.
+        #
+        # Reading sixteen characters out loud is effort, and nobody spends it
+        # on a stranger, which makes it the right filter.
+        ring = self.client.keyring
+        for address in ring.remembered():
+            if address in here or not ring.is_checked(address):
+                continue
+            picture = self.faces.of(address)
+            peers.append({"address": address,
+                          "name": ring.nicks.get(address) or address[:8],
+                          "status": "x", "psm": "",
+                          "known": True,
+                          "checked": ring.is_checked(address),
+                          "away_since": ring.last_seen.get(address, 0.0),
+                          "face": {"pixels": faces.unpack(picture),
+                                   "colours": list(faces.colours_of(picture))},
+                          "unread": self.unread.get(address, 0)})
         messages = [dict(item, state=self.state_of(item))
                     for item in self.threads.get(self.convo, [])[-80:]]
         base.update({
@@ -612,6 +649,8 @@ class App:
         if self.client is not None:
             for event in self.client.pump():
                 self.absorb(event)
+            for peer in self.client.session.online_peers():
+                self.client.keyring.saw(peer.address, now)
             self.want_faces(now)
             for panel in self.panels:
                 # A panel that is always on keeps working whatever is on
@@ -710,7 +749,10 @@ button.small{padding:.3rem .6rem;font-size:.8rem}
 .line b{font-weight:600}
 .line .addr{font-family:var(--mono);font-size:.7rem;color:var(--faint)}
 .line.mine b{color:var(--mark)}
-.tick{font-family:var(--mono);font-size:.7rem;color:var(--faint);margin-left:.3rem}
+.tick{font-family:var(--mono);font-size:.7rem;color:var(--faint);margin-left:.3rem;
+  cursor:default}
+.tick.delivered{color:var(--mark)}
+.tick.failed{color:#b4472f}
 .tick.d{color:var(--good)}.tick.f{color:var(--mark)}
 form.say{display:flex;gap:.5rem;padding-top:.5rem;border-top:1px solid var(--rule)}
 form.say input{flex:1}
@@ -723,6 +765,10 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
+.verify{font-size:.76rem;color:var(--faint);line-height:1.5;margin:.1rem 0 .6rem;
+  border-left:2px solid var(--rule);padding-left:.6rem}
+.verify b{font-family:var(--mono);color:var(--soft);font-size:.92em}
+.verify.done{border-left-color:var(--mark);color:var(--soft)}
 #roomform{margin:.2rem 0 .7rem}
 #roomform input{width:100%;background:var(--panel);border:1px solid var(--rule);
   color:var(--ink);font:inherit;font-size:.82rem;padding:.3rem .4rem;border-radius:2px}
@@ -735,6 +781,8 @@ button.plain{background:none;border:0;padding:0;font:inherit;color:var(--mark);
 canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid var(--rule);
   border-radius:2px;background:var(--panel);flex:none}
 .who{display:flex;gap:.5rem;align-items:center}
+.who[data-away="1"]{opacity:.5}
+.checked{color:var(--mark);font-size:.72rem;margin-left:.2rem}
 .who canvas.face{width:26px;height:26px}
 .whotext{min-width:0;flex:1}
 .mine{display:flex;gap:.7rem;align-items:center;margin:.2rem 0 .6rem}
@@ -835,7 +883,16 @@ function begin(){
         port: document.getElementById('port').value});
 }
 
-const TICK = {q:'\u00b7', s:'\u00b7', p:'\u2713', d:'\u2713\u2713', f:'\u2717'};
+/* Keyed on what the session actually reports. It was keyed on single letters
+   while the states are whole words, so the lookup missed every time and the
+   app has never shown a tick. */
+const TICK = {
+  queued:    ['\u00b7',        'waiting for the radio'],
+  sent:      ['\u00b7',        'went out, nobody has confirmed yet'],
+  partial:   ['\u2713',        'some of them have it'],
+  delivered: ['\u2713\u2713',  'arrived'],
+  failed:    ['\u2717',        'lost, and nobody got it'],
+};
 
 function staying(){
   const s = state.service || {};
@@ -852,9 +909,30 @@ function staying(){
       <span class="hint">${esc(s.how || '')}</span></span></label>`;
 }
 
+function verifyStrip(){
+  const who = (state.peers||[]).find(p => p.address === state.convo);
+  if(!who) return '';
+  /* Keys are trusted on first contact, so a stranger who got there before the
+     real person is indistinguishable from them. Reading the address out loud
+     is the only thing that settles it, and only the person at the screen can
+     do it. */
+  return who.checked
+    ? `<p class="verify done">&#x2713; you checked <b>${esc(who.address)}</b> with
+       them in person.
+       <button class="plain" type="button"
+         onclick="send({do:'checked', who:'${who.address}', yes:false})">undo</button></p>`
+    : `<p class="verify">Read <b>${esc(who.address)}</b> out to them. If it
+       matches what their screen says,
+       <button class="plain" type="button"
+         onclick="send({do:'checked', who:'${who.address}', yes:true})">tick it
+       off</button>.</p>`;
+}
+
 function talking(){
   const me = state.me || {}, peers = state.peers || [];
-  const here = peers.filter(p => p.status !== 'x');
+  /* Everybody met, not just everybody in range. Somebody you talked to
+     yesterday used to vanish completely when they were not about. */
+  const people = peers;
   return `
   <div class="cols">
     <div class="side">
@@ -892,23 +970,29 @@ function talking(){
         ${state.unread_group ? `<span class="pip">${state.unread_group}</span>` : ''}
         everybody</button>
       <h3>in range</h3>
-      ${here.length ? here.map((p,i) => `
-        <button class="who" ${state.convo===p.address?'aria-current="page"':''}
+      ${people.length ? people.map((p,i) => `
+        <button class="who" data-away="${p.status==='x'?1:0}"
+          ${state.convo===p.address?'aria-current="page"':''}
           onclick="send({do:'convo',convo:'${p.address}'})">
           <canvas class="face" data-face="${i}" width="32" height="32"></canvas>
           <span class="whotext">
             ${p.unread ? `<span class="pip">${p.unread}</span>` : ''}
             <span class="dot ${p.status}"></span>${esc(p.name)}
-            ${p.psm ? `<span class="psm">${esc(p.psm)}</span>` : ''}
+            ${p.checked ? `<span class="checked" title="you compared this address with them in person">&#x2713;</span>` : ''}
+            ${p.psm ? `<span class="psm">${esc(p.psm)}</span>`
+                    : (p.status === 'x' && p.away_since
+                        ? `<span class="psm">${since(p.away_since)}</span>` : '')}
           </span>
         </button>`).join('') : '<p class="hint">Nobody yet. They appear on their own.</p>'}
     </div>
     <div class="talk">
+      ${state.convo ? verifyStrip() : ''}
       <div class="lines" id="lines">
         ${(state.messages||[]).map(m => `
           <p class="line ${m.mine?'mine':''}"><b>${esc(m.who)}</b>
             ${m.text ? esc(m.text) : ''}
-            ${m.mine ? `<span class="tick ${m.state}">${TICK[m.state]||''}</span>` : ''}
+            ${m.mine && TICK[m.state] ? `<span class="tick ${m.state}"
+              title="${TICK[m.state][1]}">${TICK[m.state][0]}</span>` : ''}
           </p>`).join('') ||
           '<p class="hint">Nothing said yet. Anything you send waits until somebody is in range.</p>'}
       </div>
@@ -924,6 +1008,31 @@ function talking(){
 
 /* Faces arrive as a palette and a pixel a byte, which is what the radio
    carried. Drawing one is a loop, not a library. */
+/* Roughly when somebody was last heard.
+ *
+ * Deliberately vague. A count of minutes is the WhatsApp habit and it makes a
+ * contact list into an attendance record: forty minutes ago invites "you were
+ * about, why did you not answer", and earlier today does not.
+ *
+ * It would also be lying. Everybody's heartbeat slows as more people arrive,
+ * so at twenty people somebody is heard every five minutes and counted away
+ * after thirteen, and a minute count is precision the radio never had.
+ */
+function since(when){
+  if(!when) return 'met before';
+  const now = new Date(), then = new Date(when * 1000);
+  const secs = Math.max(0, now/1000 - when);
+  const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((day(now) - day(then)) / 86400000);
+  /* Nothing at all for today or yesterday. Whether somebody was about this
+     morning is nobody's business, and this is a list of people you know
+     rather than a register of who turned up. */
+  if(days <= 1) return '';
+  if(days < 7) return 'a few days ago';
+  if(days < 60) return 'a while ago';
+  return 'a long time ago';
+}
+
 function paint(canvas, face){
   if(!canvas || !face || !face.pixels || !face.pixels.length) return;
   const g = canvas.getContext('2d');
@@ -942,8 +1051,8 @@ function paint(canvas, face){
 
 function paintAll(){
   if(state.me) paint(document.getElementById('myface'), state.me.face);
-  const here = (state.peers||[]).filter(p => p.status !== 'x');
-  here.forEach((p,i) => paint(document.querySelector(`canvas[data-face="${i}"]`), p.face));
+  (state.peers||[]).forEach((p,i) =>
+    paint(document.querySelector(`canvas[data-face="${i}"]`), p.face));
   const pick = document.getElementById('pick');
   if(pick && !pick.dataset.wired){
     pick.dataset.wired = '1';
