@@ -574,4 +574,54 @@ _ids = _re2.findall(r'id="([^"]+)"', _bar)
 assert len(_ids) == len(set(_ids)), _ids
 ok("the navigation stylesheet has an id of its own, so it stays invisible")
 
+
+# ---------- the app shows the same ticks as the terminal ----------
+import re as _re3
+_page = open("loraline/app.py").read()
+_start = _page.index("const TICK")
+_block = _page[_start:_page.index("\n};", _start)]
+_keys = set(_re3.findall(r"^  (\w+):", _block, _re3.M))
+# It was keyed on single letters while the session reports whole words, so the
+# lookup missed every time and no tick has ever appeared in the app.
+assert {d.value for d in Delivery} == _keys, {d.value for d in Delivery} ^ _keys
+ok(f"every delivery state has a tick in the app: {', '.join(sorted(_keys))}")
+
+
+# ---------- people you have met, and people you have checked ----------
+with _tmp.TemporaryDirectory() as room:
+    shelf = _os.path.join(room, "peers.json")
+    mine = Identity()
+    ring = Keyring(mine, "x", keystore=shelf)
+    one, two = Identity(), Identity()
+    ring.learn(one.address, one.public_b64, one.verify_b64)
+    ring.learn(two.address, two.public_b64, two.verify_b64)
+    ring.remember_nick(one.address, "hank")
+    ring.saw(one.address, 2000.0)
+    ring.saw(two.address, 1000.0)
+    # Keys are trusted on first contact, so a stranger who got there before
+    # the real person is indistinguishable from them. This is the one claim
+    # that settles it, and only the person at the screen can make it.
+    ring.check_off(one.address)
+
+    back = Keyring(mine, "x", keystore=shelf)
+    assert back.remembered() == [one.address, two.address], "newest heard first"
+    assert back.is_checked(one.address) and not back.is_checked(two.address)
+    assert back.nicks.get(one.address) == "hank"
+    ok("who you have met, when you heard them and who you checked all survive a restart")
+
+    back.check_off(one.address, False)
+    assert not Keyring(mine, "x", keystore=shelf).is_checked(one.address)
+    # and it cannot be claimed for somebody never met
+    stranger = Identity()
+    back.check_off(stranger.address)
+    assert not back.is_checked(stranger.address)
+    ok("a tick can be taken back, and cannot be put against somebody unknown")
+
+    # Unticking somebody takes them off the list and never forgets their key.
+    # Forgetting a key is what lets somebody else take that address later, so
+    # the keystore keeps everybody while the list keeps only the checked.
+    assert two.address in back.remembered() and one.address in back.remembered()
+    assert not back.is_checked(two.address)
+    ok("and the keystore keeps everybody's keys whether or not they are listed")
+
 print("\nALL PASS")
