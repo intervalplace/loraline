@@ -61,6 +61,8 @@ class App:
         self.watchers = 0          # how many windows are open on this
         self.faces = faces.Faces()
         self.arriving: dict = {}   # address -> pieces of their picture
+        self._panel_trouble: dict = {}
+        self._last_stumble = ""
         self.asked: dict = {}      # address -> when we last asked
 
     # -- serving -----------------------------------------------------------
@@ -440,8 +442,17 @@ class App:
         for panel in self.panels:
             try:
                 base[panel.tag] = panel.snapshot()
-            except Exception:
-                base[panel.tag] = {}
+            except Exception as exc:
+                # A panel that cannot describe itself used to hand the page an
+                # empty object, and the page drew "undefined" everywhere with
+                # nothing anywhere saying why.
+                base[panel.tag] = {"broken": f"{type(exc).__name__}: {exc}"}
+                if self._panel_trouble.get(panel.tag) != str(exc):
+                    self._panel_trouble[panel.tag] = str(exc)
+                    import traceback
+                    traceback.print_exc()
+                    self.note(f"{panel.title} could not draw itself: {exc}",
+                              "warn")
         return base
 
     def absorb(self, event) -> None:
@@ -483,10 +494,13 @@ class App:
         self.settings.passphrase = passphrase
         store.save(self.settings)
         if self.client is not None:
-            self.client.session.peers.clear()
             self.unread.clear()
             self.convo = ""
             self.client.rekey(passphrase)
+            # Say hello on the new channel at once. Waiting for the next
+            # heartbeat means a minute of looking like nobody is there, which
+            # is indistinguishable from it not working.
+            self.client.session.announce()
         self.note("Moved. The people here are whoever has the same phrase.",
                   "gold" if not self.settings.open_channel else "warn")
         self.publish(self.snapshot())
@@ -580,23 +594,49 @@ class App:
                 pass
         print(f"loraline is at http://127.0.0.1:{self.port}")
         while self.running:
-            now = time.time()
-            if self.client is not None:
-                for event in self.client.pump():
-                    self.absorb(event)
-                self.want_faces(now)
-                for panel in self.panels:
-                    # A panel that is always on keeps working whatever is on
-                    # screen; that is the whole difference between a game and
-                    # something holding other people's messages.
-                    try:
-                        panel.tick(now)
-                    except Exception as exc:
-                        self.note(f"{panel.title} stumbled: {exc}", "warn")
-            for order in self.drain():
-                self.handle(order)
-            self.publish(self.snapshot())
+            # One bad tick must not take the node down with it.
+            #
+            # Nothing here was guarded, so any exception anywhere ended the
+            # loop, run() returned, the process exited and the window went to
+            # connection refused. A radio that stops holding other people's
+            # messages because one frame was malformed is worse than a radio
+            # that says what went wrong and carries on.
+            try:
+                self.one_turn()
+            except Exception as exc:
+                self.stumbled(exc)
             time.sleep(0.2)
+
+    def one_turn(self) -> None:
+        now = time.time()
+        if self.client is not None:
+            for event in self.client.pump():
+                self.absorb(event)
+            self.want_faces(now)
+            for panel in self.panels:
+                # A panel that is always on keeps working whatever is on
+                # screen; that is the whole difference between a game and
+                # something holding other people's messages.
+                try:
+                    panel.tick(now)
+                except Exception as exc:
+                    self.note(f"{panel.title} stumbled: {exc}", "warn")
+        for order in self.drain():
+            self.handle(order)
+        self.publish(self.snapshot())
+
+    def stumbled(self, exc: Exception) -> None:
+        """Say what went wrong, once per kind, and keep going."""
+        import traceback
+        kind = f"{type(exc).__name__}: {exc}"
+        if self._last_stumble != kind:
+            self._last_stumble = kind
+            traceback.print_exc()
+            self.note(f"Something went wrong and was skipped: {kind}", "warn")
+            try:
+                self.publish(self.snapshot())
+            except Exception:
+                pass
 
     def drain(self) -> list:
         out = []

@@ -159,8 +159,14 @@ class Host:
 # The switcher, put into every page by the host rather than copied into four
 # of them. It is deliberately plain: each application has its own look and a
 # bar that tried to match all of them would match none.
+# The style element must not carry the same id as the bar it styles.
+#
+# It did, so `#loraline-nav{display:flex}` matched the <style> element as well
+# as the <div>, and a style element is only invisible because its default is
+# display:none. Overriding that printed the whole stylesheet across the top of
+# every page.
 NAV_STYLE = """
-<style id="loraline-nav">
+<style id="loraline-nav-css">
 #loraline-nav{position:sticky;top:0;z-index:99;display:flex;gap:.1rem;
   align-items:center;padding:.35rem .6rem;background:#1b1a18;color:#cfc9bf;
   font:13px ui-monospace,Menlo,Consolas,monospace;border-bottom:1px solid #000}
