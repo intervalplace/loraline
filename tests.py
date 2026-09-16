@@ -534,4 +534,44 @@ for _name, _b in _BANDS.items():
     assert _b.get("note") and _b.get("label"), _name
 ok("one band table: EU is 36 s an hour, the 915 bands have no limit")
 
+
+# ---------- one bad tick must not take the node down ----------
+class _Breaks:
+    tag, title, route, always = "bad", "Bad", "/bad", True
+    def start(self, host): pass
+    def heard(self, src, payload): pass
+    def tick(self, now): raise RuntimeError("every tick")
+    def handle(self, order): pass
+    def owns(self, path): return False
+    def page(self, path=""): return ""
+    def snapshot(self): raise RuntimeError("cannot describe myself")
+
+from loraline.app import App as _App
+_broken = _App(port=0)
+_broken.panels = [_Breaks()]
+# Nothing in the loop was guarded, so one exception anywhere ended it, run()
+# returned, the process exited, and the window went to connection refused.
+for _ in range(3):
+    _broken.one_turn()          # must not raise
+# and a panel that cannot describe itself says so rather than handing the page
+# an empty object to draw "undefined" from
+class _Up:
+    pass
+_broken.client = _Up()
+_broken.client.session = _Up()
+_broken.client.session.peers = {}
+try:
+    shown = _broken.snapshot()
+    assert "broken" in shown.get("bad", {}), shown.get("bad")
+except AttributeError:
+    pass                        # a half-built client is not what this tests
+ok("a panel that throws every tick cannot stop the node running")
+
+# and the style element must not share the id of the bar it styles
+_bar = _host.nav_html([toy], "/")
+import re as _re2
+_ids = _re2.findall(r'id="([^"]+)"', _bar)
+assert len(_ids) == len(set(_ids)), _ids
+ok("the navigation stylesheet has an id of its own, so it stays invisible")
+
 print("\nALL PASS")
