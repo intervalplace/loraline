@@ -22,6 +22,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import crypto, detect, face as faces, host as hosting, service, settings as store
+from . import __version__ as _version, build_id as _build
 from .client import Client
 from .crypto import GROUP, Identity, Keyring
 from .protocol import Delivery, Status
@@ -325,6 +326,7 @@ class App:
             faces.mark(self.faces.own(self.identity.address)))
         self.busy = ""
         self.note(f"You are {self.settings.nick} ({self.identity.address}).")
+        self.note(f"loraline {_version}, build {_build()}.")
         self.publish(self.snapshot())
 
     # -- running -----------------------------------------------------------
@@ -422,6 +424,7 @@ class App:
                 "foreign": getattr(getattr(self.client, "link", None),
                                    "frames_foreign", 0),
             },
+            "version": f"{_version} \u00b7 {_build()}",
             "service": {
                 "autostart": self.autostart.on,
                 "how": self.autostart.describe(),
@@ -1001,6 +1004,7 @@ function talking(){
           your picture and your keys stay as they are.</p>
       </div>
       <h3>this window</h3>
+      <p class="staying"><span class="hint">loraline ${esc(state.version||'?')}</span></p>
       <p class="staying">${staying()}</p>
       <h3>conversations</h3>
       <button class="who" ${state.convo==='*'?'aria-current="page"':''}
