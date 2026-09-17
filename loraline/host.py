@@ -168,6 +168,7 @@ class Host:
 NAV_STYLE = """
 <style id="loraline-nav-css">
 #loraline-nav{position:sticky;top:0;z-index:99;display:flex;gap:.1rem;
+  flex-wrap:wrap;
   align-items:center;padding:.35rem .6rem;background:#1b1a18;color:#cfc9bf;
   font:13px ui-monospace,Menlo,Consolas,monospace;border-bottom:1px solid #000}
 #loraline-nav a{color:#cfc9bf;text-decoration:none;padding:.25rem .6rem;
@@ -177,6 +178,8 @@ NAV_STYLE = """
 #loraline-nav .mark svg{width:15px;height:15px;vertical-align:-3px}
 #loraline-nav .mark{color:#ea8fb4;margin-right:.5rem;letter-spacing:-1px}
 #loraline-nav .on{margin-left:auto;color:#7f7a72;font-size:11px}
+/* On a narrow window the switcher matters and the note does not. */
+@media(max-width:34rem){#loraline-nav .on{display:none}}
 #loraline-open{position:sticky;top:0;z-index:98;padding:.3rem .6rem;
   background:#5a1226;color:#f0c8d4;font:12px ui-monospace,Menlo,monospace;
   border-bottom:1px solid #000;text-align:center}

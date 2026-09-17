@@ -131,6 +131,8 @@ class LoRaInterface(Interface):
         self._ser.reset_input_buffer()
 
     def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return              # already reading
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -332,6 +334,21 @@ class Link:
     def __init__(self, interfaces: list[Interface], keyring=None,
                  bridge: bool = True) -> None:
         self.interfaces = interfaces
+        # Start anything that is not already reading.
+        #
+        # Opening a port and reading from it were two calls, and the app made
+        # only the first. Sending writes to the port directly, so everything
+        # it said went out and was heard, while nothing ever came back: the
+        # reader thread did not exist. That looked exactly like a radio that
+        # could not hear, and cost days.
+        #
+        # Starting is idempotent, so the terminal client can go on doing it
+        # itself and nothing starts twice.
+        for iface in interfaces:
+            try:
+                iface.start()
+            except Exception:
+                pass
         self.keyring = keyring
         self.bridge = bridge
         self._heard: list = []         # raw lines heard, for a trace

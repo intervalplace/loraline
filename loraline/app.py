@@ -725,12 +725,15 @@ PAGE = r"""<!DOCTYPE html>
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);
      font-size:16px;line-height:1.5}
 .wrap{max-width:52rem;margin:0 auto;padding:0 1rem 2rem;min-height:100vh;
+  width:100%;
       display:flex;flex-direction:column}
 header{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;
+  flex-wrap:wrap;
        padding:1rem 0 .7rem;border-bottom:1px solid var(--rule)}
 h1{font-size:1.1rem;margin:0;font-weight:600}
 h1 span{color:var(--mark);font-family:var(--mono)}
-.meta{font-family:var(--mono);font-size:.72rem;color:var(--faint);text-align:right}
+.meta{font-family:var(--mono);font-size:.72rem;color:var(--faint);text-align:right;
+  overflow-wrap:anywhere}
 /* setting up */
 .setup{max-width:27rem;margin:2.4rem auto;width:100%}
 .setup h2{font-size:1.5rem;margin:0 0 .3rem;font-weight:600}
@@ -766,7 +769,7 @@ button.small{padding:.3rem .6rem;font-size:.8rem}
      font-size:.66rem;padding:0 .35rem;font-family:var(--mono)}
 .talk{flex:1;display:flex;flex-direction:column;min-width:0}
 .lines{flex:1;overflow-y:auto;padding:.2rem .2rem .6rem}
-.line{margin:0 0 .45rem}
+.line{margin:0 0 .45rem;overflow-wrap:anywhere}
 .line b{font-weight:600}
 .line .addr{font-family:var(--mono);font-size:.7rem;color:var(--faint)}
 .line.mine b{color:var(--mark)}
@@ -776,6 +779,10 @@ button.small{padding:.3rem .6rem;font-size:.8rem}
 .tick.failed{color:#b4472f}
 .tick.d{color:var(--good)}.tick.f{color:var(--mark)}
 form.say{display:flex;gap:.5rem;padding-top:.5rem;border-top:1px solid var(--rule)}
+/* A flex item will not shrink below its content unless told to, which is how
+   an input box pushes the send button off a narrow window. */
+.say input{flex:1;min-width:0}
+.say button{flex:none}
 form.say input{flex:1}
 .log{font-family:var(--mono);font-size:.7rem;color:var(--faint);
      max-height:5.5rem;overflow-y:auto;border-top:1px solid var(--rule);
@@ -814,7 +821,17 @@ canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid va
 .mine input[type=file]{display:none}
 .mine button.plain{background:none;border:0;color:var(--faint);padding:0;
   font-size:.76rem;text-decoration:underline;cursor:pointer}
-@media(max-width:40rem){.cols{flex-direction:column}.side{width:auto}}
+/* Stack sooner than the columns strictly break, because a twelve rem sidebar
+   beside a squeezed conversation is worse than one above it. */
+@media(max-width:46rem){
+  .cols{flex-direction:column}
+  .side{width:auto}
+  .meta{text-align:left}
+}
+@media(max-width:30rem){
+  .wrap{padding:0 .6rem 2rem}
+  .side{font-size:.84rem}
+}
 </style></head><body>
 <div class="wrap">
 <header>
@@ -930,8 +947,8 @@ function staying(){
          still reach you.`}
     <label><input type="checkbox" id="auto" ${s.autostart ? 'checked' : ''}
       onchange="send({do:'autostart', on:this.checked})">
-      <span>start when the computer does<br>
-      <span class="hint">${esc(s.how || '')}</span></span></label>`;
+      <span>start with the computer${s.autostart
+        ? `<br><span class="hint">${esc(s.how || '')}</span>` : ''}</span></label>`;
 }
 
 /* What the radio has actually heard.
@@ -1161,7 +1178,7 @@ function keepTyping(fn){
 function render(){
   const meta = document.getElementById('meta');
   if(state.ready && state.me){
-    meta.innerHTML = `${esc(state.me.nick)} &middot; ${state.me.address}` +
+    meta.innerHTML = `${esc(state.me.nick)} (${state.me.address})` +
       (state.airtime ? `<br>${state.airtime} of the hour left` : '');
   } else {
     meta.textContent = state.busy || '';

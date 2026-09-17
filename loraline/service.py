@@ -127,11 +127,16 @@ class Autostart:
             return False
 
     def describe(self) -> str:
+        """Where the thing that does it lives.
+
+        Shown only once it is switched on: before that it is a path nobody
+        needs, and after it is how you would undo this by hand.
+        """
         if sys.platform == "darwin":
-            return "a launch agent in ~/Library/LaunchAgents"
+            return "~/Library/LaunchAgents"
         if sys.platform.startswith("win"):
-            return "a shortcut in your Startup folder"
-        return "a systemd user service in ~/.config/systemd/user"
+            return "your Startup folder"
+        return "~/.config/systemd/user"
 
 
 def only_one(port: int) -> bool:
