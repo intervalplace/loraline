@@ -373,17 +373,39 @@ me_addr = "a1b2c3"
 default = _face.identicon(me_addr)
 assert len(_face.unpack(default)) == _face.SIDE ** 2
 assert len(_face.colours_of(default)) == 8
-assert _face.identicon(me_addr) == default
-assert _face.identicon("d4e5f6") != default
-# mirrored, because symmetry is what makes a blotch read as a face
-px = _face.unpack(default)
-S = _face.SIDE
-assert all(px[y*S + x] == px[y*S + S-1-x] for y in range(S) for x in range(S // 2))
-ok(f"everybody has a face before they set one, {len(default)} characters of it")
+assert _face.identicon(me_addr) == default, "the same address, the same one"
+# A hashed blotch is unique and says nothing. These are the MSN habit: a small
+# set of things, and you are one of them until you decide otherwise.
+assert default in _face.CREATURES
+assert len(_face.CREATURES) == len(_face.CREATURE_NAMES)
+_spread = {_face.creature_of("%016x" % n) for n in range(400)}
+assert _spread == set(_face.CREATURE_NAMES), sorted(set(_face.CREATURE_NAMES) - _spread)
+ok(f"everybody starts as one of {len(_face.CREATURES)} creatures: "
+   f"{', '.join(_face.CREATURE_NAMES[:4])} and so on")
 
-marks = {_face.mark(_face.identicon(f"{n:06x}")) for n in range(400)}
-assert len(marks) > 395, len(marks)
-ok(f"six characters say which picture somebody has: {len(marks)} distinct in 400")
+# each one has to be a whole picture, and use the colours it says it does
+for _art in _face.CREATURES:
+    _px = _face.unpack(_art)
+    assert len(_px) == _face.SIDE ** 2
+    assert len(set(_px)) >= 3, "a creature with two colours is a blotch"
+    assert max(_px) < 8
+ok("and each is a full picture in the eight colours that travel with it")
+
+# The mark says which picture, not which person. Two people who are both the
+# duck have the same mark and never trade pictures, which is exactly right:
+# there is nothing to send.
+import random as _rand
+_rand.seed(7)
+_pictures = {_face.pack([_rand.randrange(8) for _ in range(_face.SIDE ** 2)])
+             for _ in range(400)}
+_marks = {_face.mark(p) for p in _pictures}
+assert len(_marks) > 395, len(_marks)
+assert len({_face.mark(a) for a in _face.CREATURES}) == len(_face.CREATURES)
+ok(f"six characters say which picture: {len(_marks)} distinct in 400")
+
+_same = {_face.mark(_face.identicon("%016x" % n)) for n in range(400)}
+assert len(_same) == len(_face.CREATURES)
+ok("and two people who are both the duck never trade pictures, having the same one")
 
 pieces = _face.offer(default)
 assert all(len(p) < 110 for p in pieces), max(len(p) for p in pieces)
@@ -637,5 +659,16 @@ assert not _dc.fields(_Presence) if _dc.is_dataclass(_Presence) else True
 _quiet = _App(port=0)
 _quiet.absorb(_Presence())          # must not raise
 ok("a presence event carries nothing, and absorbing one says nothing")
+
+
+# ---------- what the radio has heard ----------
+from loraline.transport import Link as _Link
+_counted = _Link([], kr4)
+assert _counted.frames_heard == 0 and _counted.frames_foreign == 0
+# Three faults look identical from outside: nothing heard at all is the radios
+# not reaching each other, frames heard but none decoding is the wrong
+# passphrase, and frames decoding with nobody appearing is a fault in here.
+assert hasattr(_counted, "frames_heard") and hasattr(_counted, "frames_foreign")
+ok("the link counts what it hears and what would not decode, always")
 
 print("\nALL PASS")
