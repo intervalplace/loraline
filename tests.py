@@ -747,4 +747,49 @@ assert [m["when"] for m in _reading.threads[""]] == sorted(
     m["when"] for m in _reading.threads[""])
 ok("and one that arrives late sits where it was said, not where it landed")
 
+
+# ---------- a name is worked out when it is drawn ----------
+_naming = _App(port=0)
+_stranger = Identity()
+_naming.absorb(_Msg(convo="", who=_stranger.address, text="hei", incoming=True,
+                    seq=1, when=100, colour=0, src=_stranger.address))
+# A message kept whatever name was known the moment it arrived, so anything
+# said before their nick turned up stayed addressed to sixteen hex characters.
+assert _naming.name_for(_stranger.address, _stranger.address) == _stranger.address
+assert len(_App.short(_stranger.address)) == 9, "a long address does not fit a sidebar"
+assert _App.short("abcd") == "abcd", "a short one is left alone"
+ok("an unknown name shortens to eight characters, and is resolved when drawn")
+
+
+# ---------- a window of its own ----------
+from loraline import window as _win
+import os as _os2
+
+_was = _os2.environ.pop("LORALINE_WINDOW", None)
+_nb = _os2.environ.pop("LORALINE_NO_BROWSER", None)
+try:
+    assert _win.wanted(), "a window by default"
+    _os2.environ["LORALINE_WINDOW"] = "0"
+    assert not _win.wanted(), "and the browser when asked for"
+    del _os2.environ["LORALINE_WINDOW"]
+    # A build server has neither a web view nor a browser, and trying for
+    # either is how a build hangs instead of failing.
+    _os2.environ["LORALINE_NO_BROWSER"] = "1"
+    assert not _win.wanted()
+finally:
+    _os2.environ.pop("LORALINE_WINDOW", None)
+    _os2.environ.pop("LORALINE_NO_BROWSER", None)
+    if _was is not None:
+        _os2.environ["LORALINE_WINDOW"] = _was
+    if _nb is not None:
+        _os2.environ["LORALINE_NO_BROWSER"] = _nb
+ok("a window of its own by default, the browser on request, neither on a build server")
+
+# the server and the loop have to be separable, because a web view owns the
+# main thread on macOS and the node has to turn beside it
+assert hasattr(_App, "prepare") and hasattr(_App, "loop")
+_split = _App(port=0)
+assert _split.prepare.__doc__ and _split.loop.__doc__
+ok("and the node can be started and turned separately, so a window can own the main thread")
+
 print("\nALL PASS")

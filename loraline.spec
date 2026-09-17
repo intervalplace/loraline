@@ -59,7 +59,8 @@ a = Analysis(
     excludes=[
         "tkinter", "test", "unittest", "pydoc_data", "lib2to3",
         "numpy", "matplotlib", "setuptools", "pip",
-    ] + ([] if "hearsay" in riding else ["PIL"]),
+    ] + ([] if "hearsay" in riding else ["PIL"])
+      + ["webview", "webview.platforms"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

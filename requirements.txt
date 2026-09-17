@@ -1,3 +1,14 @@
 pyserial
 pynacl
 windows-curses; sys_platform == "win32"
+
+# A window of loraline's own rather than a browser tab.
+#
+# Optional. Without it the same page opens in your browser, which is also how
+# you reach a node on a small computer in a window from the phone in your
+# pocket. On macOS and Windows this pulls the platform web view with it; on
+# Linux the web view is a system package (PyGObject), so a plain install there
+# uses the browser.
+#
+# Nobody downloading the built app installs anything: it is in the bundle.
+pywebview
