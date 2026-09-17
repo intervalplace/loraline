@@ -691,4 +691,31 @@ _marked = _App(port=0)
 assert "version" not in _marked.snapshot() or _marked.client is None
 ok(f"the build says what it is: {_pkg.__version__}, build {_pkg.build_id()}")
 
+
+import inspect as _inspect
+from loraline import transport as _transport
+
+# ---------- a link reads from what it was given ----------
+from loraline.transport import Link as _L, Interface as _I
+
+class _Counting(_I):
+    def __init__(self):
+        super().__init__()
+        self.name, self.started = "toy", 0
+    def start(self):
+        self.started += 1
+
+# Opening a port and reading from it were two calls, and the app made only the
+# first. Sending writes to the port directly, so everything it said went out
+# and was heard, while nothing came back: the reader thread did not exist.
+_one, _two = _Counting(), _Counting()
+_L([_one, _two], keyring=None)
+assert _one.started == 1 and _two.started == 1, (_one.started, _two.started)
+ok("a link starts every bearer it is handed, so a reader cannot be forgotten")
+
+# and the terminal client starts them too, so starting must be harmless twice
+_src = _inspect.getsource(_transport.LoRaInterface.start)
+assert "is_alive" in _src, "starting twice would make a second reader thread"
+ok("and starting one that is already reading does nothing")
+
 print("\nALL PASS")
