@@ -515,7 +515,15 @@ class App:
         elif isinstance(event, SystemEvent):
             self.note(event.text, "warn" if event.level == "warn" else "muted")
         elif isinstance(event, PresenceEvent):
-            self.note(event.text)
+            # Nothing to say and nothing to read: it is an empty marker
+            # meaning the roster changed, and the roster is in the snapshot
+            # that goes out at the end of the turn.
+            #
+            # This read event.text, which a PresenceEvent has never had, so
+            # every single presence raised and took the turn down with it
+            # before the snapshot was published. The peer was in the session
+            # the whole time; the page was never told.
+            pass
 
     def change_room(self, passphrase: str) -> None:
         """Move to a different conversation without becoming a different person.
