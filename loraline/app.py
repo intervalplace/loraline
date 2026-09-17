@@ -363,6 +363,9 @@ class App:
         elif what == "unface" and self.client is not None:
             self.set_my_face("")
             self.note("Back to the picture your address had.")
+        elif what == "announce" and self.client is not None:
+            self.client.session.announce()
+            self.note("Said hello. Anybody in range should see you now.")
         elif what == "checked" and self.client is not None:
             who = str(order.get("who") or "")
             self.client.keyring.check_off(who, bool(order.get("yes")))
@@ -413,6 +416,12 @@ class App:
             "log": [{"text": t, "role": r} for _, t, r in self.log[-60:]],
             "panels": [{"tag": p.tag, "title": p.title, "route": p.route,
                         "always": p.always} for p in self.panels],
+            "radio": {
+                "heard": getattr(getattr(self.client, "link", None),
+                                 "frames_heard", 0),
+                "foreign": getattr(getattr(self.client, "link", None),
+                                   "frames_foreign", 0),
+            },
             "service": {
                 "autostart": self.autostart.on,
                 "how": self.autostart.describe(),
@@ -469,6 +478,7 @@ class App:
             "me": {"nick": session.nick, "address": self.identity.address,
                    "psm": session.psm, "status": session.status.value,
                    "own_face": bool(self.faces.mine),
+                   "creature": faces.creature_of(self.identity.address),
                    "face": self.face_of(self.identity.address)},
             "peers": peers,
             "convo": self.convo,
@@ -773,6 +783,7 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
+.hereis{font-size:.78rem;color:var(--faint);line-height:1.5;margin:.2rem 0 .5rem}
 .verify{font-size:.76rem;color:var(--faint);line-height:1.5;margin:.1rem 0 .6rem;
   border-left:2px solid var(--rule);padding-left:.6rem}
 .verify b{font-family:var(--mono);color:var(--soft);font-size:.92em}
@@ -861,9 +872,10 @@ function setup(){
 }
 
 function showRoom(){
+  roomOpen = !roomOpen;
   const box = document.getElementById('roomform');
-  box.style.display = box.style.display === 'none' ? 'block' : 'none';
-  if(box.style.display === 'block') document.getElementById('newpass').focus();
+  if(box) box.style.display = roomOpen ? 'block' : 'none';
+  if(roomOpen) document.getElementById('newpass').focus();
 }
 
 function joinRoom(){
@@ -871,10 +883,12 @@ function joinRoom(){
   if(!box.value.trim()) return;
   send({do:'room', passphrase: box.value.trim()});
   box.value = '';
+  roomOpen = false;
 }
 
 function joinOpen(){
   send({do:'room', passphrase: (state.settings||{}).open_phrase || ''});
+  roomOpen = false;
 }
 
 function openChannel(){
@@ -917,6 +931,22 @@ function staying(){
       <span class="hint">${esc(s.how || '')}</span></span></label>`;
 }
 
+/* What the radio has actually heard.
+ *
+ * Three different faults look identical from the outside and this tells them
+ * apart without a log file: nothing heard at all is the radios not reaching
+ * each other, frames heard but none decoding is the wrong passphrase, and
+ * frames decoding with nobody appearing is a fault in here.
+ */
+function radioLine(){
+  const r = state.radio || {};
+  if(!r.heard) return '<br><span class="hint">Nothing heard on the radio yet.</span>';
+  const mine = r.heard - (r.foreign||0);
+  if(!mine) return `<br><span class="hint">Heard ${r.heard} transmission(s), none
+    of them for this room. Somebody is out there on a different passphrase.</span>`;
+  return `<br><span class="hint">Heard ${r.heard}, ${mine} for this room.</span>`;
+}
+
 function verifyStrip(){
   const who = (state.peers||[]).find(p => p.address === state.convo);
   if(!who) return '';
@@ -951,8 +981,8 @@ function talking(){
           <label for="pick">use a photograph</label>
           <input type="file" id="pick" accept="image/*">
           ${(state.me||{}).own_face
-            ? '<br><button class="plain" type="button" onclick="send({do:\'unface\'})">back to the default</button>'
-            : '<br>the one your address came with'}
+            ? '<br><button class="plain" type="button" onclick="send({do:\'unface\'})">back to the ' + esc((state.me||{}).creature||'default') + '</button>'
+            : '<br>you are the ' + esc((state.me||{}).creature||'default')}
         </div>
       </div>
       <h3>room</h3>
@@ -961,7 +991,7 @@ function talking(){
           : 'You are in a private room.'}
         <br><button class="plain" type="button" onclick="showRoom()">change room</button>
       </p>
-      <div id="roomform" style="display:none">
+      <div id="roomform" style="display:${roomOpen ? 'block' : 'none'}">
         <input id="newpass" type="password" placeholder="a different passphrase">
         <div class="roomrow">
           <button type="button" onclick="joinRoom()">join</button>
@@ -978,6 +1008,11 @@ function talking(){
         ${state.unread_group ? `<span class="pip">${state.unread_group}</span>` : ''}
         everybody</button>
       <h3>in range</h3>
+      <p class="hereis">
+        <button class="plain" type="button" onclick="send({do:'announce'})">say
+        you are here</button>
+        ${radioLine()}
+      </p>
       ${people.length ? people.map((p,i) => `
         <button class="who" data-away="${p.status==='x'?1:0}"
           ${state.convo===p.address?'aria-current="page"':''}
@@ -1097,6 +1132,28 @@ function say(e){
   box.value = '';
 }
 
+/* The airtime counter changes every second, so the snapshot changes, so the
+   page is rebuilt. Anything the person was in the middle of goes with it: a
+   half-typed message, an opened form. These survive the rebuild. */
+let roomOpen = false;
+
+function keepTyping(fn){
+  const before = {};
+  for(const box of document.querySelectorAll('input[type=text], input:not([type]), textarea, input[type=password]'))
+    if(box.id) before[box.id] = [box.value, box === document.activeElement,
+                                 box.selectionStart, box.selectionEnd];
+  fn();
+  for(const [id, [value, focused, from, to]] of Object.entries(before)){
+    const box = document.getElementById(id);
+    if(!box) continue;
+    box.value = value;
+    if(focused){
+      box.focus();
+      try { box.setSelectionRange(from, to); } catch(e) {}
+    }
+  }
+}
+
 function render(){
   const meta = document.getElementById('meta');
   if(state.ready && state.me){
@@ -1113,7 +1170,7 @@ function render(){
     ['nick','pass','band','port','text'].forEach(id => {
       const el = document.getElementById(id); if(el) values[id] = el.value;
     });
-    body.innerHTML = state.ready ? talking() : setup();
+    keepTyping(() => { body.innerHTML = state.ready ? talking() : setup(); });
     body.dataset.view = want;
     Object.entries(values).forEach(([id, v]) => {
       const el = document.getElementById(id);

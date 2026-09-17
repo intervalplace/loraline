@@ -335,6 +335,11 @@ class Link:
         self.keyring = keyring
         self.bridge = bridge
         self._heard: list = []         # raw lines heard, for a trace
+        # Counted always, not only while tracing. Whether the radio is hearing
+        # anything at all is the first question when two of them cannot find
+        # each other, and it should not need a log file to answer.
+        self.frames_heard = 0
+        self.frames_foreign = 0
         self._seen: deque[int] = deque(maxlen=DEDUP_MEMORY)
         self._seen_set: set[int] = set()
         self._connections: dict[str, int] = {}
@@ -415,6 +420,9 @@ class Link:
                 # anything at all. A line that will not decode is either
                 # somebody else's passphrase or somebody else's protocol, and
                 # either way it is not silence.
+                self.frames_heard += 1
+                if frame is None:
+                    self.frames_foreign += 1
                 self._heard.append((item.line, frame is not None))
                 if len(self._heard) > 64:
                     del self._heard[:-64]
