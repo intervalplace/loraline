@@ -144,12 +144,19 @@ class App:
         route = "/" + path.lstrip("/").split("?")[0]
         body = PAGE
         for panel in self.panels:
+            if not panel.owns(route):
+                continue
             try:
-                if not panel.owns(route):
-                    continue
                 body = panel.page(route)
-            except Exception:
-                body = PAGE
+            except Exception as exc:
+                # This used to fall back to the chat page without a word, so a
+                # panel whose page() would not take the route it was given
+                # served the wrong page for months and looked like a dead
+                # switcher rather than a broken one.
+                import traceback
+                traceback.print_exc()
+                self.note(f"{panel.title} could not draw its page: {exc}", "warn")
+                body = _sorry(panel.title, exc)
             break
         return self.with_nav(body, route)
 
@@ -783,6 +790,22 @@ def main(argv=None) -> int:
         print(trouble, file=sys.stderr)
     app.run()
     return 0
+
+
+def _sorry(title: str, exc: Exception) -> str:
+    """Say which panel broke and how, instead of quietly showing another."""
+    from html import escape
+    return ("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            f"<title>{escape(title)}</title><style>body{{margin:0;background:#f7f5f0;"
+            "color:#22201d;font:17px/1.6 ui-serif,Charter,Georgia,serif}"
+            ".p{max-width:34rem;margin:3rem auto;padding:0 1.2rem}"
+            "code{font:13px ui-monospace,Menlo,monospace;background:#eee;"
+            "padding:.1rem .3rem}</style></head><body><div class=\"p\">"
+            f"<h1>{escape(title)} could not draw its page</h1>"
+            f"<p><code>{escape(type(exc).__name__)}: {escape(str(exc))}</code></p>"
+            "<p>The rest of loraline is still running. This is a fault worth "
+            "reporting.</p></div></body></html>")
 
 
 PAGE = r"""<!DOCTYPE html>
