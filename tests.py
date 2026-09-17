@@ -792,4 +792,26 @@ _split = _App(port=0)
 assert _split.prepare.__doc__ and _split.loop.__doc__
 ok("and the node can be started and turned separately, so a window can own the main thread")
 
+
+# ---------- every panel serves its own page ----------
+class _NoPath:
+    tag, title, route, always = "old", "Old", "/old", False
+    def start(self, host): pass
+    def heard(self, src, payload): pass
+    def tick(self, now): pass
+    def handle(self, order): pass
+    def owns(self, path): return path == "/old"
+    def page(self): return "<html>the old shape</html>"   # takes no route
+    def snapshot(self): return {}
+
+# loraline passes the route it matched. A panel that would not accept it
+# raised a TypeError the host swallowed, and the chat page was served in its
+# place: a switcher that looked dead rather than broken.
+_hosting = _App(port=0)
+_hosting.panels = [_NoPath()]
+_served = _hosting.page_for("/old")
+assert "could not draw its page" in _served, _served[:200]
+assert "TypeError" in _served
+ok("a panel whose page will not take the route says so, instead of serving another")
+
 print("\nALL PASS")
