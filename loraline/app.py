@@ -19,6 +19,8 @@ import queue
 import threading
 import time
 import webbrowser
+
+from . import window as own_window
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import crypto, detect, face as faces, host as hosting, service, settings as store
@@ -442,7 +444,8 @@ class App:
         for peer in sorted(session.peers.values(), key=lambda p: p.label.lower()):
             here.add(peer.address)
             picture = self.faces.of(peer.address)
-            peers.append({"address": peer.address, "name": peer.label,
+            peers.append({"address": peer.address,
+                          "name": peer.nick or self.short(peer.address),
                           "status": peer.status.value, "psm": peer.psm,
                           "known": peer.known_key,
                           "checked": self.client.keyring.is_checked(peer.address),
@@ -467,7 +470,7 @@ class App:
                 continue
             picture = self.faces.of(address)
             peers.append({"address": address,
-                          "name": ring.nicks.get(address) or address[:8],
+                          "name": ring.nicks.get(address) or self.short(address),
                           "status": "x", "psm": "",
                           "known": True,
                           "checked": ring.is_checked(address),
@@ -475,7 +478,8 @@ class App:
                           "face": {"pixels": faces.unpack(picture),
                                    "colours": list(faces.colours_of(picture))},
                           "unread": self.unread.get(address, 0)})
-        messages = [dict(item, state=self.state_of(item))
+        messages = [dict(item, state=self.state_of(item),
+                         who=self.name_for(item.get("src"), item["who"]))
                     for item in self.threads.get(self.convo, [])[-80:]]
         base.update({
             "me": {"nick": session.nick, "address": self.identity.address,
@@ -627,6 +631,29 @@ class App:
         self.client.session.set_face_mark(faces.mark(picture))
         self.note("Your picture is set. People near you will pick it up.")
 
+    def name_for(self, address: str, fallback: str = "") -> str:
+        """What to call somebody, worked out now rather than when they spoke.
+
+        A message used to keep whatever name was known the moment it arrived,
+        so anything said before their nick turned up stayed addressed to
+        sixteen hex characters for ever.
+        """
+        if not address:
+            return fallback
+        if self.client is not None:
+            peer = self.client.session.peers.get(address)
+            if peer is not None and peer.nick:
+                return peer.nick
+            known = self.client.keyring.nicks.get(address)
+            if known:
+                return known
+        return fallback or self.short(address)
+
+    @staticmethod
+    def short(address: str) -> str:
+        """Enough of an address to tell people apart, in a narrow column."""
+        return address[:8] + "\u2026" if len(address) > 9 else address
+
     def state_of(self, item) -> str:
         if item["mine"] and self.client is not None:
             out = self.client.session.outgoing(item["seq"])
@@ -646,19 +673,26 @@ class App:
                 return f"{budget.remaining_ms(time.time())/1000:.0f} s"
         return ""
 
-    def run(self) -> None:
+    def prepare(self) -> bool:
+        """Get the server and the radio going. False if somebody beat us to it."""
         # One at a time. Two copies would fight over the serial port and the
         # loser would look broken rather than second, so the second one just
         # opens a window onto the first and gets out of the way.
         if not service.only_one(self.port):
-            print(f"loraline is already running; opening its window.", flush=True)
+            print("loraline is already running; opening its window.", flush=True)
             service.raise_window(self.port)
-            return
+            self.running = False
+            return False
         self.start_server()
         if self.settings.ready:
             threading.Thread(target=self._bring_up, daemon=True).start()
         else:
             self.look_for_radio()
+        return True
+
+    def run(self) -> None:
+        if not self.prepare():
+            return
         # BROWSER=echo is a Unix convention and means nothing on macOS or
         # Windows, where this would try to open a real browser on a machine
         # that has none. A build server is exactly that machine.
@@ -668,6 +702,10 @@ class App:
             except Exception:
                 pass
         print(f"loraline is at http://127.0.0.1:{self.port}")
+        self.loop()
+
+    def loop(self) -> None:
+        """Turn until told to stop."""
         while self.running:
             # One bad tick must not take the node down with it.
             #
@@ -725,7 +763,25 @@ class App:
 
 
 def main(argv=None) -> int:
-    App().run()
+    app = App()
+    # A window of its own if this machine has one, and the browser if not.
+    #
+    # The web view has to own the main thread on macOS, so the node turns on a
+    # thread beside it rather than the other way round. Everything else is the
+    # same program serving the same page.
+    if own_window.wanted() and own_window.available():
+        if app.prepare():
+            url = f"http://127.0.0.1:{app.port}"
+            print(f"loraline is at {url}")
+            if own_window.show(url, "loraline", serve=app.loop):
+                app.running = False
+                return 0
+        else:
+            return 0
+    trouble = own_window.why_not()
+    if trouble and os.environ.get("LORALINE_WINDOW", "").strip() == "1":
+        print(trouble, file=sys.stderr)
+    app.run()
     return 0
 
 
