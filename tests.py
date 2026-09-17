@@ -671,4 +671,24 @@ assert _counted.frames_heard == 0 and _counted.frames_foreign == 0
 assert hasattr(_counted, "frames_heard") and hasattr(_counted, "frames_foreign")
 ok("the link counts what it hears and what would not decode, always")
 
+
+# ---------- the palette has to survive its own packing ----------
+_there_and_back = _face._unpack_palette(_face._pack_palette(_face.DEFAULT_PALETTE))
+# Four bits a channel, so only multiples of seventeen come back unchanged. The
+# paper was #f4efe4 and returned as #ffeeee, which is pink, so every creature
+# sat on a pink square.
+assert list(_face.DEFAULT_PALETTE) == list(_there_and_back), _there_and_back
+ok("the default palette comes back out of the packing exactly as it went in")
+
+
+# ---------- which build is running ----------
+import loraline as _pkg
+assert _pkg.__version__ and _pkg.build_id()
+assert len(_pkg.build_id()) == 6
+# Two sessions went on bugs that were already fixed, because nothing in the
+# window said whether the code running was the code just downloaded.
+_marked = _App(port=0)
+assert "version" not in _marked.snapshot() or _marked.client is None
+ok(f"the build says what it is: {_pkg.__version__}, build {_pkg.build_id()}")
+
 print("\nALL PASS")
