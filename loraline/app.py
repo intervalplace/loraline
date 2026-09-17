@@ -519,9 +519,26 @@ class App:
             return
         if isinstance(event, MessageEvent):
             thread = self.threads.setdefault(event.convo, [])
-            thread.append({"who": event.who, "text": event.text,
-                           "mine": not event.incoming, "seq": event.seq,
-                           "when": int(event.when)})
+            line = {"who": event.who, "text": event.text,
+                    "mine": not event.incoming, "seq": event.seq,
+                    "when": int(event.when), "src": event.src}
+            # The same message can arrive more than once: a sender retransmits
+            # until it is acknowledged, and each attempt is sealed afresh, so
+            # the link cannot tell them apart by their bytes. One person's
+            # sequence number can.
+            twice = any(old.get("src") == line["src"]
+                        and old.get("seq") == line["seq"]
+                        and old.get("who") == line["who"]
+                        and line["seq"] >= 0
+                        for old in thread)
+            if twice:
+                return
+            thread.append(line)
+            # Put it where it belongs rather than where it landed. Anything
+            # said while you were out of range arrives when somebody comes
+            # back, which is long after it was written, and a conversation
+            # that reads in arrival order does not read at all.
+            thread.sort(key=lambda item: item["when"])
             del thread[:-200]
             if event.incoming and event.convo != self.convo:
                 self.unread[event.convo] = self.unread.get(event.convo, 0) + 1
