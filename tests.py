@@ -624,4 +624,18 @@ with _tmp.TemporaryDirectory() as room:
     assert not back.is_checked(two.address)
     ok("and the keystore keeps everybody's keys whether or not they are listed")
 
+
+# ---------- a presence must not take the turn down ----------
+from loraline.session import PresenceEvent as _Presence
+import dataclasses as _dc
+
+# PresenceEvent is an empty marker meaning the roster changed. The app read
+# event.text off it, which it has never had, so every presence raised and
+# aborted the turn before the snapshot was published: the peer was in the
+# session the whole time and the page was never told.
+assert not _dc.fields(_Presence) if _dc.is_dataclass(_Presence) else True
+_quiet = _App(port=0)
+_quiet.absorb(_Presence())          # must not raise
+ok("a presence event carries nothing, and absorbing one says nothing")
+
 print("\nALL PASS")
