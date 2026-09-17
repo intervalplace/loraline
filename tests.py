@@ -718,4 +718,33 @@ _src = _inspect.getsource(_transport.LoRaInterface.start)
 assert "is_alive" in _src, "starting twice would make a second reader thread"
 ok("and starting one that is already reading does nothing")
 
+
+# ---------- a conversation reads in the order it was said ----------
+from loraline.session import MessageEvent as _Msg
+
+_reading = _App(port=0)
+def _said(text, seq, when, who="test", mine=False):
+    _reading.absorb(_Msg(convo="", who=who, text=text, incoming=not mine,
+                         seq=seq, when=when, colour=0, src=who))
+
+_said("hello", 1, 100)
+_said("hello2", 2, 110)
+_said("how are you", 3, 180)
+_said("i am fine", 1, 240, who="mats", mine=True)
+
+# A sender retransmits until it is acknowledged and each attempt is sealed
+# afresh, so the link cannot tell two tries apart by their bytes.
+_said("how are you", 3, 180)
+assert [m["text"] for m in _reading.threads[""]].count("how are you") == 1
+ok("a message that arrives twice is only shown once")
+
+# Anything said while you were out of range arrives when somebody comes back,
+# long after it was written, and a thread in arrival order does not read.
+_said("are you there", 0, 60)
+_order = [m["text"] for m in _reading.threads[""]]
+assert _order[0] == "are you there", _order
+assert [m["when"] for m in _reading.threads[""]] == sorted(
+    m["when"] for m in _reading.threads[""])
+ok("and one that arrives late sits where it was said, not where it landed")
+
 print("\nALL PASS")
