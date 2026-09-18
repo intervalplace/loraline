@@ -51,16 +51,26 @@ a = Analysis(
         "serial.serialposix", "serial.serialwin32", "serial.serialcli",
         "nacl", "nacl.public", "nacl.signing", "nacl.secret",
         "nacl.bindings", "_cffi_backend",
+        # The web view, so the app has a window of its own rather than a
+        # browser tab. Its backend is picked at runtime by platform, which
+        # PyInstaller cannot see, and each platform has exactly one that
+        # matters: Cocoa on macOS, Edge on Windows, GTK on Linux.
+        "webview", "webview.platforms",
+        "webview.platforms.cocoa", "webview.platforms.edgechromium",
+        "webview.platforms.gtk", "webview.platforms.winforms",
+        "bottle", "proxy_tools",
     ] + riding,
     hookspath=[],
     runtime_hooks=[],
-    # Nothing here draws a window of its own; the interface is a browser. Left
-    # in, these add tens of megabytes to something that is otherwise small.
+    # Left in, these add tens of megabytes to something otherwise small.
+    #
+    # webview belongs in hiddenimports above and was for a while listed here
+    # instead, which told the bundle to leave out the very thing that gives it
+    # a window, so every build quietly opened a browser.
     excludes=[
         "tkinter", "test", "unittest", "pydoc_data", "lib2to3",
         "numpy", "matplotlib", "setuptools", "pip",
-    ] + ([] if "hearsay" in riding else ["PIL"])
-      + ["webview", "webview.platforms"],
+    ] + ([] if "hearsay" in riding else ["PIL"]),
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

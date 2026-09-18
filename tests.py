@@ -877,4 +877,23 @@ assert (_pl.Path("packaging") / "stamp.py").exists(), \
     "packaging writes the stamp in before freezing"
 ok(f"the build says which build it is: {_pkg2.build_id()}, not the digest of nothing")
 
+
+# ---------- the bundle has to contain the window ----------
+_spec = open("loraline.spec", encoding="utf-8").read()
+_hidden = _spec[_spec.index("hiddenimports"):_spec.index("hookspath")]
+_excluded = _spec[_spec.index("excludes="):_spec.index("win_no_prefer")]
+# webview belongs in hiddenimports and was listed in excludes instead, which
+# told the bundle to leave out the very thing that gives it a window, so every
+# build quietly opened a browser and nothing anywhere said why.
+assert "webview" in _hidden, "the web view has to be bundled"
+assert "webview" not in _excluded, "and must not be excluded from it"
+for _backend in ("cocoa", "edgechromium", "gtk"):
+    assert _backend in _hidden, _backend
+ok("the packaged app bundles the web view, and every platform's backend")
+
+# and a build that cannot name itself is no use, so it falls back to the
+# bundle rather than saying "unstamped" and leaving you none the wiser
+assert "sys.executable" in open("loraline/__init__.py", encoding="utf-8").read()
+ok("a frozen build works its id out from the bundle, having no sources to hash")
+
 print("\nALL PASS")
