@@ -865,4 +865,16 @@ for _py in sorted(_pl.Path("loraline").rglob("*.py")) + [_pl.Path("tests.py")]:
 assert not _unencoded, f"reads without an encoding: {_unencoded}"
 ok("every file this reads or writes says utf-8, so Windows agrees with everywhere else")
 
+
+# ---------- a packaged build has to know which build it is ----------
+import loraline as _pkg2
+# A frozen app has no .py files on disk, so the digest was of an empty hash:
+# the same six characters for every release, in the one place it matters.
+assert _pkg2.stamp_of_sources() != "unstamped", "there are sources here"
+_empty = __import__("hashlib").blake2b(digest_size=3).hexdigest()
+assert _pkg2.build_id() != _empty, "that is the digest of nothing at all"
+assert (_pl.Path("packaging") / "stamp.py").exists(), \
+    "packaging writes the stamp in before freezing"
+ok(f"the build says which build it is: {_pkg2.build_id()}, not the digest of nothing")
+
 print("\nALL PASS")
