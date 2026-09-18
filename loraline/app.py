@@ -404,13 +404,21 @@ class App:
                                                          time.time()):
                     self.absorb(event)
         elif what == "psm" and self.client is not None:
-            self.client.session.set_psm(order.get("text", ""))
+            said = str(order.get("text") or "").strip()[:40]
+            self.client.session.set_psm(said)
+            # Your own line shows nowhere but the box you typed it in, so
+            # setting it looked exactly like nothing happening.
+            self.note(f"Your line is now: {said}" if said
+                      else "Your line is cleared.", "gold" if said else "muted")
+            self.publish(self.snapshot())
         elif what == "status" and self.client is not None:
             try:
-                self.client.session.set_status(Status(order.get("status", "o")),
-                                               time.time())
+                picked = Status(order.get("status", "on"))
             except ValueError:
-                pass
+                return
+            self.client.session.set_status(picked, time.time())
+            self.note(f"You are {picked.name.lower()}.", "muted")
+            self.publish(self.snapshot())
 
     def snapshot(self) -> dict:
         base = {
