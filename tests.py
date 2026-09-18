@@ -295,7 +295,7 @@ with _tmp.TemporaryDirectory() as _room:
     back = _settings.load(where)
     assert back.nick == "hank" and back.configured
     assert oct(_os.stat(where).st_mode)[-3:] == "600", "it has a passphrase in it"
-    open(where, "w").write("not json")
+    open(where, "w", encoding="utf-8").write("not json")
     assert not _settings.load(where).ready
 ok("settings are remembered once, kept private, and survive being corrupted")
 
@@ -599,7 +599,7 @@ ok("the navigation stylesheet has an id of its own, so it stays invisible")
 
 # ---------- the app shows the same ticks as the terminal ----------
 import re as _re3
-_page = open("loraline/app.py").read()
+_page = open("loraline/app.py", encoding="utf-8").read()
 _start = _page.index("const TICK")
 _block = _page[_start:_page.index("\n};", _start)]
 _keys = set(_re3.findall(r"^  (\w+):", _block, _re3.M))
@@ -813,5 +813,56 @@ _served = _hosting.page_for("/old")
 assert "could not draw its page" in _served, _served[:200]
 assert "TypeError" in _served
 ok("a panel whose page will not take the route says so, instead of serving another")
+
+
+# ---------- everything the app accepts can be reached from its page ----------
+import re as _re4
+_source = open("loraline/app.py", encoding="utf-8").read()
+_handled = set(_re4.findall(r'what == "(\w+)"', _source))
+# The page is a Python string, so an order inside a template literal has its
+# quotes escaped: do:\'unface\' rather than do:'unface'.
+_sendable = set(_re4.findall(r"do:\s*\\?'(\w+)", _source))
+_sendable |= set(_re4.findall(r'do:\s*\\?"(\w+)', _source))
+# The app grew handlers for a status message and for away and busy that
+# nothing on the page could ever send: the terminal had them and the window
+# did not, and nobody would guess that from looking.
+_only_by_hand = _handled - _sendable - {"forget"}
+assert not _only_by_hand, f"no way to reach: {sorted(_only_by_hand)}"
+ok(f"every order the app handles has something on the page that sends it")
+
+
+# ---------- every file is read as utf-8, wherever this runs ----------
+import ast as _ast
+import pathlib as _pl
+
+# Python's open() uses the locale encoding on Windows, not utf-8, so a file
+# with "æ" in it came back as "Ã¦" and a test comparing source text failed on
+# the build machine and nowhere else.
+#
+# Checked against the parse tree rather than the text, because a line-by-line
+# search called a wrapped call unencoded and missed one where the arguments
+# had brackets of their own.
+_TEXTY = {"read_text", "write_text", "open"}
+_unencoded = []
+for _py in sorted(_pl.Path("loraline").rglob("*.py")) + [_pl.Path("tests.py")]:
+    _tree = _ast.parse(_py.read_text(encoding="utf-8"))
+    for _node in _ast.walk(_tree):
+        if not isinstance(_node, _ast.Call):
+            continue
+        _name = getattr(_node.func, "attr", getattr(_node.func, "id", ""))
+        if _name not in _TEXTY:
+            continue
+        if any(k.arg == "encoding" for k in _node.keywords):
+            continue
+        # binary opens carry their own answer, and a socket is not a file
+        _modes = [a.value for a in _node.args
+                  if isinstance(a, _ast.Constant) and isinstance(a.value, str)]
+        if any("b" in m for m in _modes):
+            continue
+        if _name == "open" and not isinstance(_node.func, _ast.Name):
+            continue          # somebody else's open(), not the builtin
+        _unencoded.append(f"{_py}:{_node.lineno}")
+assert not _unencoded, f"reads without an encoding: {_unencoded}"
+ok("every file this reads or writes says utf-8, so Windows agrees with everywhere else")
 
 print("\nALL PASS")
