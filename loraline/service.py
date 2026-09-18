@@ -97,7 +97,7 @@ class Autostart:
     def turn_on(self) -> bool:
         try:
             self.where.parent.mkdir(parents=True, exist_ok=True)
-            self.where.write_text(self.body())
+            self.where.write_text(self.body(), encoding="utf-8")
             if sys.platform.startswith("win"):
                 pass
             elif sys.platform == "darwin":

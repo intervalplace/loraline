@@ -84,7 +84,7 @@ def load(path=DEFAULT_PATH) -> Settings:
     if not path.exists():
         return Settings()
     try:
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return Settings()
     known = {f: raw.get(f) for f in Settings().__dict__ if f in raw}
@@ -98,7 +98,8 @@ def save(settings: Settings, path=DEFAULT_PATH) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(asdict(settings), indent=2))
+        temporary.write_text(json.dumps(asdict(settings), indent=2),
+                             encoding="utf-8")
         os.replace(temporary, path)
         # It has a passphrase in it.
         try:

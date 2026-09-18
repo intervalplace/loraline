@@ -71,7 +71,7 @@ class Client:
         if _TRACE:
             seen = getattr(self.link, "take_seen", lambda: [])()
             if seen or frames or errors:
-                with open(_TRACE, "a") as f:
+                with open(_TRACE, "a", encoding="utf-8") as f:
                     for raw, ok in seen:
                         f.write(f"[{now:.1f}] <- {len(raw)}B "
                                 f"{'decoded' if ok else 'NOT FOR US'} "
@@ -104,7 +104,7 @@ class Client:
 
         if _TRACE and now - _last_trace[0] >= 1.0:
             _last_trace[0] = now
-            with open(_TRACE, "a") as f:
+            with open(_TRACE, "a", encoding="utf-8") as f:
                 f.write(f"\n[{now:.1f}] me={self.session.address} "
                         f"acks={dict(self.session.acks)}\n")
                 for it in self.session.outbox:

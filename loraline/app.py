@@ -889,6 +889,14 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
+.saying{margin:.35rem 0 .2rem;display:flex;gap:.4rem;align-items:baseline}
+.saying input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--rule);
+  color:var(--ink);font:inherit;font-size:.82rem;padding:.25rem .4rem;border-radius:2px}
+.states{margin:0 0 .6rem;display:flex;flex-wrap:wrap;gap:.3rem}
+button.state{background:none;border:1px solid transparent;color:var(--faint);
+  font:inherit;font-size:.74rem;padding:.1rem .35rem;border-radius:2px;cursor:pointer}
+button.state:hover{color:var(--ink)}
+button.state.is{border-color:var(--rule);background:var(--panel);color:var(--ink)}
 .hereis{font-size:.78rem;color:var(--faint);line-height:1.5;margin:.2rem 0 .5rem}
 .verify{font-size:.76rem;color:var(--faint);line-height:1.5;margin:.1rem 0 .6rem;
   border-left:2px solid var(--rule);padding-left:.6rem}
@@ -985,6 +993,12 @@ function setup(){
 
     <button class="go" type="button" onclick="begin()">Start</button>
   </div>`;
+}
+
+const STATUS = {on:'online', away:'away', busy:'busy', brb:'back in a bit'};
+
+function savePsm(){
+  send({do:'psm', text: document.getElementById('psm').value.trim()});
 }
 
 function showRoom(){
@@ -1101,6 +1115,18 @@ function talking(){
             : '<br>you are the ' + esc((state.me||{}).creature||'default')}
         </div>
       </div>
+      <p class="saying">
+        <input id="psm" maxlength="40" placeholder="say what you are up to"
+               value="${esc(me.psm || '')}"
+               onkeydown="if(event.key==='Enter')savePsm()">
+        <button class="plain" type="button" onclick="savePsm()">set</button>
+      </p>
+      <p class="states">
+        ${['on','away','busy','brb'].map(s => `<button type="button"
+           class="state ${me.status===s?'is':''}"
+           onclick="send({do:'status', status:'${s}'})">${STATUS[s]}</button>`).join('')}
+      </p>
+
       <h3>room</h3>
       <p class="staying">
         ${(state.settings||{}).open ? 'You are on the <b>open channel</b>.'

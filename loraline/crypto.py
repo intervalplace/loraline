@@ -127,12 +127,13 @@ class Identity:
         """Persist the keypair so your address survives a restart."""
         path = Path(path)
         if path.exists():
-            raw = base64.b64decode(path.read_text().strip())
+            raw = base64.b64decode(path.read_text(encoding="utf-8").strip())
             return cls(raw)
         identity = cls()
         secret = bytes(identity.key) if AVAILABLE else identity.public_bytes
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(base64.b64encode(secret).decode("ascii"))
+        path.write_text(base64.b64encode(secret).decode("ascii"),
+                        encoding="utf-8")
         try:
             path.chmod(0o600)
         except OSError:
@@ -208,7 +209,7 @@ class Keyring:
         if not AVAILABLE or not self.keystore.exists():
             return
         try:
-            data = json.loads(self.keystore.read_text())
+            data = json.loads(self.keystore.read_text(encoding="utf-8"))
         except Exception:
             return
         for address, rec in data.items():
@@ -249,7 +250,7 @@ class Keyring:
                 for addr, raw in self.peer_keys.items()}
         try:
             self.keystore.parent.mkdir(parents=True, exist_ok=True)
-            self.keystore.write_text(json.dumps(data))
+            self.keystore.write_text(json.dumps(data), encoding="utf-8")
         except Exception:
             pass          # persistence is best-effort; never break a session over it
 

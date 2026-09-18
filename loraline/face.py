@@ -218,7 +218,7 @@ class Faces:
         if not self.path.exists():
             return self
         try:
-            raw = json.loads(self.path.read_text())
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
             return self
         self.mine = raw.get("mine", "") or ""
@@ -234,7 +234,8 @@ class Faces:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
             temporary.write_text(json.dumps(
-                {"mine": self.mine, "theirs": self.theirs}, separators=(",", ":")))
+                {"mine": self.mine, "theirs": self.theirs},
+                separators=(",", ":")), encoding="utf-8")
             os.replace(temporary, self.path)
         except OSError:
             pass
