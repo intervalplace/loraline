@@ -7,7 +7,7 @@
 # no way to tell from the window whether the code running was the code just
 # downloaded. The app prints this on startup and shows it at the foot of the
 # page.
-__version__ = "1.11"
+__version__ = "1.13"
 
 
 def build_id() -> str:
@@ -29,18 +29,37 @@ def build_id() -> str:
 
 
 def stamp_of_sources() -> str:
-    """The digest of the modules as they are on disk. Empty if there are none,
-    which is how the packaged case used to go wrong quietly."""
+    """The digest of the modules as they are on disk.
+
+    A packaged app has none, so it falls back to the bundle itself, which is a
+    different file for every build and therefore answers the only question
+    this is for: is the thing running the thing I just downloaded. Saying
+    "unstamped" was honest and no use to anybody.
+    """
     import hashlib
     import pathlib
+    import sys
+
     here = pathlib.Path(__file__).parent
     names = sorted(p.name for p in here.glob("*.py") if p.name != "_build.py")
-    if not names:
+    if names:
+        digest = hashlib.blake2b(digest_size=3)
+        for name in names:
+            try:
+                digest.update((here / name).read_bytes())
+            except OSError:
+                pass
+        return digest.hexdigest()
+
+    # Frozen: hash the executable's own size and time, which is cheap and
+    # differs for every build. Hashing all of it would read a hundred
+    # megabytes to answer a six character question.
+    try:
+        binary = pathlib.Path(sys.executable)
+        info = binary.stat()
+        digest = hashlib.blake2b(digest_size=3)
+        digest.update(f"{binary.name}:{info.st_size}:{int(info.st_mtime)}"
+                      .encode("utf-8"))
+        return digest.hexdigest()
+    except Exception:
         return "unstamped"
-    digest = hashlib.blake2b(digest_size=3)
-    for name in names:
-        try:
-            digest.update((here / name).read_bytes())
-        except OSError:
-            pass
-    return digest.hexdigest()

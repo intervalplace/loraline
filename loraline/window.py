@@ -15,6 +15,11 @@ import sys
 import threading
 
 
+# Set once the web view is actually up, so the app can say which way it went
+# rather than leaving somebody to guess from the absence of a window.
+showing = False
+
+
 def wanted() -> bool:
     """Whether to try for a window of our own.
 
@@ -39,9 +44,14 @@ def available() -> bool:
 
 def why_not() -> str:
     """What to tell somebody who asked for a window and cannot have one."""
+    if not wanted():
+        return "asked for the browser"
     if not available():
-        return ("pywebview is not installed, so there is no window to open. "
-                "Try: pip install pywebview")
+        try:
+            import webview          # noqa: F401
+        except Exception as exc:
+            return f"no web view here ({type(exc).__name__}: {exc})"
+        return "no web view here"
     return ""
 
 
@@ -69,6 +79,8 @@ def show(url: str, title: str = "loraline", serve=None) -> bool:
         # http_server=False: the page is already being served by loraline
         # itself, and letting the web view start a second one would be a
         # second answer to the same question.
+        global showing
+        showing = True
         webview.start(debug=bool(os.environ.get("LORALINE_WINDOW_DEBUG")))
         return True
     except Exception as exc:

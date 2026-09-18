@@ -336,6 +336,14 @@ class App:
         self.busy = ""
         self.note(f"You are {self.settings.nick} ({self.identity.address}).")
         self.note(f"loraline {_version}, build {_build()}.")
+        # Which way the window went, and why if it went the other way. This
+        # was silent, so a bundle without a web view looked exactly like a
+        # bundle with one that had decided not to bother.
+        if own_window.showing:
+            self.note("In a window of its own.", "muted")
+        else:
+            why = own_window.why_not() or "asked for the browser"
+            self.note(f"In your browser: {why}", "muted")
         self.publish(self.snapshot())
 
     # -- running -----------------------------------------------------------
@@ -897,7 +905,9 @@ form.say input{flex:1}
 .staying label{display:flex;gap:.4rem;align-items:flex-start;margin-top:.4rem;
   cursor:pointer;color:var(--soft)}
 .staying input{margin:.18rem 0 0}
-.saying{margin:.35rem 0 .2rem;display:flex;gap:.4rem;align-items:baseline}
+.saying{margin:.35rem 0 .2rem;display:flex;gap:.4rem;align-items:baseline;
+  flex-wrap:wrap}
+.saying .said{color:var(--ink);font-size:.86rem}
 .saying input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--rule);
   color:var(--ink);font:inherit;font-size:.82rem;padding:.25rem .4rem;border-radius:2px}
 .states{margin:0 0 .6rem;display:flex;flex-wrap:wrap;gap:.3rem}
@@ -1005,8 +1015,22 @@ function setup(){
 
 const STATUS = {on:'online', away:'away', busy:'busy', brb:'back in a bit'};
 
+/* The box only appears while you are changing it. A field sitting there for
+   ever, with the line you set showing nowhere, made setting it look exactly
+   like nothing happening. */
+let sayingOpen = false;
+
+function editSaying(){
+  sayingOpen = true;
+  render();
+  const box = document.getElementById('psm');
+  if(box){ box.focus(); box.select(); }
+}
+
 function savePsm(){
-  send({do:'psm', text: document.getElementById('psm').value.trim()});
+  const box = document.getElementById('psm');
+  if(box) send({do:'psm', text: box.value.trim()});
+  sayingOpen = false;
 }
 
 function showRoom(){
@@ -1123,12 +1147,16 @@ function talking(){
             : '<br>you are the ' + esc((state.me||{}).creature||'default')}
         </div>
       </div>
-      <p class="saying">
-        <input id="psm" maxlength="40" placeholder="say what you are up to"
-               value="${esc(me.psm || '')}"
-               onkeydown="if(event.key==='Enter')savePsm()">
-        <button class="plain" type="button" onclick="savePsm()">set</button>
-      </p>
+      <p class="saying">${sayingOpen
+        ? `<input id="psm" maxlength="40" placeholder="say what you are up to"
+                 value="${esc(me.psm || '')}"
+                 onkeydown="if(event.key==='Enter')savePsm()">
+           <button class="plain" type="button" onclick="savePsm()">set</button>`
+        : (me.psm
+            ? `<span class="said">${esc(me.psm)}</span>
+               <button class="plain" type="button" onclick="editSaying()">change</button>`
+            : `<button class="plain" type="button" onclick="editSaying()">say what you
+               are up to</button>`)}</p>
       <p class="states">
         ${['on','away','busy','brb'].map(s => `<button type="button"
            class="state ${me.status===s?'is':''}"
