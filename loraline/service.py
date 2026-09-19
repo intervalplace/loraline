@@ -104,6 +104,9 @@ class Autostart:
                 subprocess.run(["launchctl", "load", "-w", str(self.where)],
                                capture_output=True, timeout=10)
             else:
+                # And a menu entry with a face, since an ELF binary has
+                # nowhere to keep an icon of its own.
+                desktop_entry()
                 subprocess.run(["systemctl", "--user", "daemon-reload"],
                                capture_output=True, timeout=10)
                 subprocess.run(["systemctl", "--user", "enable", f"{APP}.service"],
@@ -137,6 +140,46 @@ class Autostart:
         if sys.platform.startswith("win"):
             return "your Startup folder"
         return "~/.config/systemd/user"
+
+
+def desktop_entry(binary: str = "") -> tuple:
+    """A .desktop file and an icon path, for Linux.
+
+    An ELF binary has nowhere to keep an icon: on Linux the picture comes from
+    a .desktop file naming one in the icon directories, which is an install
+    step and not something a bundle can carry. This writes both so the app has
+    a name and a face in a menu rather than a path and a blank square.
+
+    Returns (desktop file, icon file) or (None, None) where it does not apply.
+    """
+    if not sys.platform.startswith("linux"):
+        return None, None
+    run = binary or " ".join(command())
+    home = Path.home()
+    apps = home / ".local" / "share" / "applications"
+    icons = home / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps"
+    here = Path(__file__).resolve().parent.parent / "packaging"
+    source = here / "loraline-256.png"
+    try:
+        apps.mkdir(parents=True, exist_ok=True)
+        icons.mkdir(parents=True, exist_ok=True)
+        icon = icons / "loraline.png"
+        if source.exists():
+            icon.write_bytes(source.read_bytes())
+        entry = apps / "loraline.desktop"
+        entry.write_text(
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=loraline\n"
+            "Comment=A messenger with nothing in between\n"
+            f"Exec={run}\n"
+            "Icon=loraline\n"
+            "Terminal=false\n"
+            "Categories=Network;InstantMessaging;\n",
+            encoding="utf-8")
+        return entry, icon
+    except OSError:
+        return None, None
 
 
 def only_one(port: int) -> bool:
