@@ -962,4 +962,34 @@ for _n, _line in enumerate(_lines, 1):
         f"line {_n} checks a POSIX mode without asking whether this is POSIX"
 ok("a POSIX file mode is only checked where there are POSIX file modes")
 
+
+# ---------- the app wears its own face ----------
+_icns = _pl.Path("packaging/loraline.icns")
+_ico = _pl.Path("packaging/loraline.ico")
+# Without these the app wears PyInstaller's default, which is a Python logo on
+# a floppy disk.
+assert _icns.exists() and _ico.exists(), "the icons have to be in the repo"
+
+import struct as _st
+_raw = _icns.read_bytes()
+assert _raw[:4] == b"icns"
+assert _st.unpack(">I", _raw[4:8])[0] == len(_raw), "the icns says its own length"
+_at, _kinds = 8, []
+while _at < len(_raw):
+    _kinds.append(_raw[_at:_at + 4])
+    _at += _st.unpack(">I", _raw[_at + 4:_at + 8])[0]
+assert b"ic10" in _kinds and b"ic07" in _kinds, _kinds
+ok(f"the macOS icon carries {len(_kinds)} sizes, drawn at each")
+
+# PIL's ICO writer scales one source down and will not go above it, so a
+# small source quietly gives a one-entry file, as it did for the favicon.
+_raw = _ico.read_bytes()
+_, _kind, _count = _st.unpack("<HHH", _raw[:6])
+assert _kind == 1 and _count >= 5, f"the ico has only {_count} sizes"
+ok(f"and the Windows icon carries {_count}, from 16 to 256")
+
+_spec = open("loraline.spec", encoding="utf-8").read()
+assert "icon=ICON" in _spec and "loraline.ico" in _spec
+ok("and the packaging picks the right one for the platform")
+
 print("\nALL PASS")
