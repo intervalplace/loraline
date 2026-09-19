@@ -294,7 +294,12 @@ with _tmp.TemporaryDirectory() as _room:
     _settings.save(kept, where)
     back = _settings.load(where)
     assert back.nick == "hank" and back.configured
-    assert oct(_os.stat(where).st_mode)[-3:] == "600", "it has a passphrase in it"
+    # It has a passphrase in it, so on anything with POSIX modes it is kept to
+    # the one account. Windows has no such mode: chmod there is close to a
+    # no-op, the file is protected by the profile directory's ACL instead, and
+    # this used to fail the build on that leg alone.
+    if _os.name == "posix":
+        assert oct(_os.stat(where).st_mode)[-3:] == "600", "it has a passphrase in it"
     open(where, "w", encoding="utf-8").write("not json")
     assert not _settings.load(where).ready
 ok("settings are remembered once, kept private, and survive being corrupted")
@@ -921,5 +926,40 @@ for _mod in sorted(_pl.Path("loraline").glob("*.py")):
                     and n.value.id == _name for n in _ast2.walk(_tree))
         assert not (_used and _name not in _have), f"{_mod.name} uses {_name} without importing it"
 ok("every file imports the modules it uses, including on paths nobody walks often")
+
+
+# ---------- the build says which shell it wants ----------
+_flow = _pl.Path(".github/workflows/build.yml")
+if _flow.exists():
+    _yaml = None
+    try:
+        import yaml as _yaml
+    except ImportError:
+        pass
+    if _yaml is not None:
+        _plan = _yaml.safe_load(_flow.read_text(encoding="utf-8"))
+        # Windows runners default to PowerShell, where `if [ ... ]; then` and a
+        # heredoc are both syntax errors. Some steps said bash and some did
+        # not, so this only ever broke on the Windows leg.
+        _quiet = [(j, s.get("name")) for j, spec in _plan["jobs"].items()
+                  for s in spec.get("steps", [])
+                  if s.get("run") and s.get("shell") != "bash"]
+        assert not _quiet, f"steps without an explicit shell: {_quiet}"
+        ok("every step that runs anything asks for bash, so Windows agrees")
+
+
+# ---------- and nothing checks a POSIX mode without saying so ----------
+_suite = _pl.Path("tests.py").read_text(encoding="utf-8")
+# Windows has no POSIX file mode, so a bare st_mode check fails there and
+# nowhere else, which is a build that passes twice and fails once.
+_lines = _suite.splitlines()
+for _n, _line in enumerate(_lines, 1):
+    # An assertion about a mode, not this check talking about itself.
+    if "st_mode" not in _line or not _line.strip().startswith("assert"):
+        continue
+    _before = "\n".join(_lines[max(0, _n - 6):_n])
+    assert 'os.name == "posix"' in _before, \
+        f"line {_n} checks a POSIX mode without asking whether this is POSIX"
+ok("a POSIX file mode is only checked where there are POSIX file modes")
 
 print("\nALL PASS")
