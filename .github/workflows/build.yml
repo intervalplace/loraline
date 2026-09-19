@@ -1,3 +1,9 @@
+# Builds the app on every platform somebody might download it for, and
+# attaches the results to a release when a version is tagged.
+#
+# It also builds on every push to main, so a break is found on the day it
+# happens rather than on the day somebody wants a release.
+
 name: build
 
 on:
@@ -7,11 +13,29 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push makes the old run pointless, so stop it. Four pushes in a minute
+# queued four runs of sixteen jobs, and macOS minutes bill at ten times the
+# rate, so an afternoon of small commits can cost a month of quota.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Which platforms to build.
+  #
+  # No Intel Mac. Every Mac since 2020 is Apple silicon, and macos-13 is the
+  # scarcest runner GitHub has: a tag sat queued for forty minutes waiting for
+  # one, and `timeout-minutes` does not help because it only counts once a job
+  # starts. Anybody on an older Mac can run from source, which works.
+  #
+  # Linux on every push, everything on a tag: Linux is quick and cheap and
+  # catches nearly everything, and the other three are what a release needs.
+  # macOS minutes bill at ten times the rate, so building all four on every
+  # commit is an expensive way to learn nothing.
+  #
+  # This has to be a job of its own. A job-level `if` cannot see `matrix`,
+  # because the matrix has not been expanded when that is evaluated, so the
+  # choice is made here and handed on as a list.
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -22,7 +46,6 @@ jobs:
         run: |
           LINUX='{"os":"ubuntu-22.04","label":"Linux","artifact":"loraline-linux"}'
           MAC_ARM='{"os":"macos-14","label":"macOS (Apple silicon)","artifact":"loraline-mac-apple-silicon"}'
-
           WINDOWS='{"os":"windows-latest","label":"Windows","artifact":"loraline-windows"}'
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "targets=[$MAC_ARM,$WINDOWS,$LINUX]" >> "$GITHUB_OUTPUT"
@@ -34,6 +57,8 @@ jobs:
     needs: plan
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    # A hung step should die in twenty-five minutes, not sit there for six
+    # hours.
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -45,6 +70,10 @@ jobs:
         with:
           path: loraline
 
+      # Everything that rides on loraline has to be inside the bundle: a
+      # frozen program cannot import what was not there when it was frozen.
+      # A repository that has gone away is not a build failure; it is one
+      # fewer thing in the switcher.
       - uses: actions/checkout@v4
         continue-on-error: true
         with:
@@ -69,7 +98,35 @@ jobs:
         working-directory: loraline
         run: |
           python -m pip install --upgrade pip
-          pip install pyserial pynacl pyinstaller pillow
+          pip install pyserial pynacl pyinstaller
+          # Only hearsay wants this, for turning a photograph into a profile
+          # picture. Harmless if hearsay is not here.
+          pip install pillow
+          # A window of loraline's own instead of a browser tab.
+          #
+          # On macOS and Windows this pulls the platform web view with it and
+          # has to work: a build that quietly carries on without it ships an
+          # app that opens a browser, which is what happened. On Linux the web
+          # view is a system package, so there it may fail and the build goes
+          # on, because a machine in a cupboard wants the browser anyway.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            pip install pywebview || echo "no web view on Linux; the browser it is"
+          else
+            pip install pywebview
+          fi
+
+      - name: Say what the window will do
+        working-directory: loraline
+        run: |
+          python -c "from loraline import window; print('a web view here:', window.available())"
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            python -c "import webview; print('pywebview', webview.__file__)"
+          fi
+
+      - name: Stamp the build
+        working-directory: loraline
+        run: |
+          python packaging/stamp.py
 
       - name: Test before building anything
         working-directory: loraline
@@ -87,9 +144,39 @@ jobs:
             fi
           done
 
+      # Say which packaging files this is about to use. A repo where only the
+      # package was updated and the spec left behind builds a perfectly good
+      # app with no window in it, and nothing in the log said so.
+      - name: Which packaging files are here
+        working-directory: loraline
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          spec = pathlib.Path("loraline.spec").read_text(encoding="utf-8")
+          hidden = spec[spec.index("hiddenimports"):spec.index("hookspath")]
+          excluded = spec[spec.index("excludes="):spec.index("win_no_prefer")]
+          print("spec mentions webview in hiddenimports:", "webview" in hidden)
+          print("spec mentions webview in excludes    :", "webview" in excluded)
+          if "webview" not in hidden or "webview" in excluded:
+              sys.exit("this loraline.spec is older than the package beside it; "
+                       "update loraline.spec and .github/workflows/build.yml too")
+          PY
+
       - name: Build
         working-directory: loraline
         run: pyinstaller --clean --noconfirm loraline.spec
+
+      - name: Check the bundle carries the window
+        if: runner.os != 'Linux'
+        working-directory: loraline
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          toc = pathlib.Path("build/loraline/Analysis-00.toc")
+          found = len(set(re.findall(r"'(webview[\w.]*)'", toc.read_text(errors="replace"))))
+          print(f"webview in the bundle: {found} modules")
+          sys.exit(0 if found else "the bundle has no web view; it would open a browser")
+          PY
 
       - name: Check it actually starts, and carries everything
         shell: bash
@@ -98,6 +185,8 @@ jobs:
           SMOKE_TIMEOUT: "90"
         run: python packaging/smoke.py
 
+      # Whatever went wrong, say what was actually built. A red tick with no
+      # detail is a morning of guessing.
       - name: If that failed, show what is there
         if: failure()
         shell: bash
@@ -105,8 +194,10 @@ jobs:
         run: |
           echo "--- dist"
           ls -la dist || echo "no dist at all"
+          echo "--- python"
           python -c "import sys; print(sys.version)"
           python -c "import serial, nacl; print('deps import fine')" || true
+          echo "--- what the app says when run directly"
           LORALINE_NO_BROWSER=1 timeout 20 python -m loraline || true
 
       - name: Wrap it up
@@ -115,6 +206,8 @@ jobs:
         run: |
           mkdir -p out
           if [ "$RUNNER_OS" = "macOS" ]; then
+            # A .app is a directory. ditto keeps the structure and the
+            # executable bit, which a plain zip on some runners does not.
             ditto -c -k --keepParent "dist/loraline.app" "out/${{ matrix.artifact }}.zip"
           elif [ "$RUNNER_OS" = "Windows" ]; then
             7z a "out/${{ matrix.artifact }}.zip" "./dist/loraline.exe"
@@ -143,3 +236,34 @@ jobs:
         with:
           files: downloads/**/*
           generate_release_notes: true
+          body: |
+            ## Which one do I download?
+
+            | Your computer | File |
+            |---|---|
+            | Mac, 2020 or later (M1, M2, M3, M4) | `loraline-mac-apple-silicon.zip` |
+            | Mac, older (Intel) | `loraline-mac-intel.zip` |
+            | Windows | `loraline-windows.zip` |
+            | Linux | `loraline-linux.tar.gz` |
+
+            Not sure which Mac? Apple menu → About This Mac. If it says
+            "Chip", take Apple silicon. If it says "Processor", take Intel.
+
+            ## Then
+
+            Unzip it and open the program inside: `loraline.app` on a Mac,
+            `loraline.exe` on Windows, `loraline` on Linux. It opens a window
+            in your browser and asks you three things.
+
+            ## Your computer will complain
+
+            It is unsigned software, which is what happens when nobody pays
+            Apple or Microsoft a yearly fee to be trusted.
+
+            **macOS** says Apple cannot check it for malicious software. Open
+            it once and let it be refused, then System Settings → Privacy &
+            Security → scroll down → **Open Anyway**. Only the first time.
+
+            **Windows** shows a blue panel. Click More info, then Run anyway.
+
+            **Linux** says nothing. You may need `chmod +x loraline`.
