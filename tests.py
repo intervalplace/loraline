@@ -992,4 +992,29 @@ _spec = open("loraline.spec", encoding="utf-8").read()
 assert "icon=ICON" in _spec and "loraline.ico" in _spec
 ok("and the packaging picks the right one for the platform")
 
+
+# ---------- Linux keeps its icon somewhere else ----------
+from loraline import service as _svc
+import unittest.mock as _mk
+
+# An ELF binary has nowhere to put an icon, so PyInstaller's icon= does
+# nothing there: on Linux the picture comes from a .desktop file naming one in
+# the icon directories, which is an install step and not a bundling one.
+assert (_pl.Path("packaging") / "loraline-256.png").exists(), \
+    "the Linux menu icon has to be a real file"
+
+with _mk.TemporaryDirectory() if False else __import__("tempfile").TemporaryDirectory() as _home:
+    _fake = _pl.Path(_home)
+    with _mk.patch.object(sys, "platform", "linux"), \
+         _mk.patch.object(_pl.Path, "home", lambda: _fake):
+        _entry, _icon = _svc.desktop_entry("/usr/local/bin/loraline")
+    assert _entry and _entry.exists() and _icon and _icon.exists()
+    _text = _entry.read_text(encoding="utf-8")
+    assert "Icon=loraline" in _text and "Exec=/usr/local/bin/loraline" in _text
+    assert "Type=Application" in _text
+
+with _mk.patch.object(sys, "platform", "darwin"):
+    assert _svc.desktop_entry() == (None, None), "and nowhere else wants one"
+ok("Linux gets a menu entry and an icon file, which is where its icon lives")
+
 print("\nALL PASS")

@@ -42,7 +42,11 @@ a = Analysis(
     [str(HERE / "loraline-app.py")],
     pathex=[str(HERE)] + extra_paths,
     binaries=[],
-    datas=[],
+    # The Linux menu icon travels with the bundle, because there is nowhere
+    # in an ELF binary to put one and it has to be a real file on disk before
+    # a .desktop entry can name it.
+    datas=([(str(HERE / "packaging" / "loraline-256.png"), "packaging")]
+           if (HERE / "packaging" / "loraline-256.png").exists() else []),
     # PyInstaller follows imports, and these are reached in ways it cannot
     # see: pyserial picks its backend at runtime by platform, and PyNaCl's
     # bindings come in through cffi.
