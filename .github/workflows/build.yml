@@ -96,6 +96,7 @@ jobs:
 
       - name: Install what it needs
         working-directory: loraline
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install pyserial pynacl pyinstaller
@@ -117,6 +118,7 @@ jobs:
 
       - name: Say what the window will do
         working-directory: loraline
+        shell: bash
         run: |
           python -c "from loraline import window; print('a web view here:', window.available())"
           if [ "$RUNNER_OS" != "Linux" ]; then
@@ -125,11 +127,13 @@ jobs:
 
       - name: Stamp the build
         working-directory: loraline
+        shell: bash
         run: |
           python packaging/stamp.py
 
       - name: Test before building anything
         working-directory: loraline
+        shell: bash
         run: |
           python tests.py
           python tests_bridge.py
@@ -149,6 +153,7 @@ jobs:
       # app with no window in it, and nothing in the log said so.
       - name: Which packaging files are here
         working-directory: loraline
+        shell: bash
         run: |
           python - <<'PY'
           import pathlib, re, sys
@@ -164,11 +169,13 @@ jobs:
 
       - name: Build
         working-directory: loraline
+        shell: bash
         run: pyinstaller --clean --noconfirm loraline.spec
 
       - name: Check the bundle carries the window
         if: runner.os != 'Linux'
         working-directory: loraline
+        shell: bash
         run: |
           python - <<'PY'
           import pathlib, re, sys
