@@ -101,7 +101,11 @@ def save(settings: Settings, path=DEFAULT_PATH) -> None:
         temporary.write_text(json.dumps(asdict(settings), indent=2),
                              encoding="utf-8")
         os.replace(temporary, path)
-        # It has a passphrase in it.
+        # It has a passphrase in it, so keep it to this account.
+        #
+        # POSIX only. Windows has no such mode and chmod there does close to
+        # nothing; the file sits in the user's profile directory and is
+        # protected by that directory's ACL instead.
         try:
             os.chmod(path, 0o600)
         except OSError:
