@@ -896,4 +896,30 @@ ok("the packaged app bundles the web view, and every platform's backend")
 assert "sys.executable" in open("loraline/__init__.py", encoding="utf-8").read()
 ok("a frozen build works its id out from the bundle, having no sources to hash")
 
+
+# ---------- every module a file uses is one it imports ----------
+import ast as _ast2
+
+# `sys.stderr` was reached only when somebody asked for a window and could not
+# have one, so it was a NameError nobody hit until a packaged build did.
+for _mod in sorted(_pl.Path("loraline").glob("*.py")):
+    _tree = _ast2.parse(_mod.read_text(encoding="utf-8"))
+    _have = {a.asname or a.name.split(".")[0]
+             for n in _ast2.walk(_tree) if isinstance(n, _ast2.Import)
+             for a in n.names}
+    _have |= {a.asname or a.name for n in _ast2.walk(_tree)
+              if isinstance(n, _ast2.ImportFrom) for a in n.names}
+    _have |= {n.name for n in _ast2.walk(_tree)
+              if isinstance(n, (_ast2.FunctionDef, _ast2.ClassDef))}
+    _have |= {t.id for n in _ast2.walk(_tree)
+              if isinstance(n, _ast2.Assign) for t in n.targets
+              if isinstance(t, _ast2.Name)}
+    # only the standard modules this project actually leans on
+    for _name in ("sys", "os", "json", "time", "queue", "threading", "base64",
+                  "hashlib", "math", "socket", "webbrowser"):
+        _used = any(isinstance(n, _ast2.Attribute) and isinstance(n.value, _ast2.Name)
+                    and n.value.id == _name for n in _ast2.walk(_tree))
+        assert not (_used and _name not in _have), f"{_mod.name} uses {_name} without importing it"
+ok("every file imports the modules it uses, including on paths nobody walks often")
+
 print("\nALL PASS")
