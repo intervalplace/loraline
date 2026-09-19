@@ -79,6 +79,17 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# The icon, where there is one for this platform. Without it the app wears
+# PyInstaller's default, which is a Python logo on a floppy disk.
+_icns = HERE / "packaging" / "loraline.icns"
+_ico = HERE / "packaging" / "loraline.ico"
+if sys.platform == "darwin" and _icns.exists():
+    ICON = str(_icns)
+elif sys.platform.startswith("win") and _ico.exists():
+    ICON = str(_ico)
+else:
+    ICON = None
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -93,13 +104,12 @@ exe = EXE(
     upx=False,
     runtime_tmpdir=None,
     console=(sys.platform.startswith("linux")),
+    icon=ICON,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(HERE / "packaging" / "loraline.icns")
-    if (HERE / "packaging" / "loraline.icns").exists() else None,
 )
 
 if sys.platform == "darwin":
