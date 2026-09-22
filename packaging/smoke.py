@@ -89,7 +89,9 @@ def main() -> int:
 
     room = tempfile.mkdtemp()
     env = dict(os.environ, HOME=room, USERPROFILE=room, BROWSER="echo",
-               LORALINE_NO_BROWSER="1")
+               LORALINE_NO_BROWSER="1",
+               # Not whatever serial port the build machine happens to have.
+               LORALINE_NO_RADIO="1")
     process = subprocess.Popen([str(app)], env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     started = time.time()
