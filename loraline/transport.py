@@ -126,7 +126,14 @@ class LoRaInterface(Interface):
         self._lock = threading.Lock()
 
     def open(self) -> None:
-        self._ser = serial.Serial(self.port, self.baud, timeout=0.2)
+        # A write timeout as well as a read one. On Windows, writing to a COM
+        # port with nothing on the other end can wait in flush() for ever for
+        # a receiver that is not there, and the probe had one while this did
+        # not: a dead built-in serial port could hang the whole of starting
+        # up, with the page saying "telling the radio which band" and nothing
+        # else, ever.
+        self._ser = serial.Serial(self.port, self.baud, timeout=0.2,
+                                  write_timeout=1.0)
         time.sleep(0.3)
         self._ser.reset_input_buffer()
 
