@@ -1120,4 +1120,47 @@ for _name, _row in _th.THEMES.items():
         f"the {_name} swatch does not match its theme"
 ok("and the swatches you pick from are the themes you get")
 
+
+# ---------- a dead serial port fails, rather than hanging ----------
+import serial as _serial
+from loraline import transport as _tr
+
+# On Windows, writing to a COM port with nothing on the other end can wait in
+# flush() for ever. The probe had a write timeout and the radio did not, so a
+# built-in serial port could hang the whole of starting up.
+_seen = {}
+class _Dead:
+    in_waiting = 0
+    def __init__(self, *a, **k):
+        _seen.update(k)
+    def write(self, b):
+        raise _serial.SerialTimeoutException("Write timeout")
+    def flush(self): pass
+    def read(self, n): return b""
+    def reset_input_buffer(self): pass
+    def close(self): pass
+
+_real = _tr.serial.Serial
+_tr.serial.Serial = _Dead
+try:
+    _radio = _tr.LoRaInterface("COM1", _tr.RadioConfig(channel=18, sf=7, power_dbm=14))
+    _radio.open()
+    assert _seen.get("write_timeout"), "the radio has to be opened with a write timeout"
+    _started = time.time()
+    try:
+        _radio.apply_config()
+        raise AssertionError("a port that takes nothing should not configure")
+    except _serial.SerialTimeoutException:
+        pass
+    assert time.time() - _started < 5, "and it has to give up quickly"
+finally:
+    _tr.serial.Serial = _real
+ok("a serial port that will not take anything gives up, rather than hanging for ever")
+
+# The packaged app is checked on three machines, and only one of them has a
+# stray serial port, so the check tells loraline not to go looking.
+_smoke = _pl.Path("packaging/smoke.py").read_text(encoding="utf-8")
+assert "LORALINE_NO_RADIO" in _smoke
+ok("and checking the build does not depend on the build machine's serial ports")
+
 print("\nALL PASS")
