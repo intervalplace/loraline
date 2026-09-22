@@ -279,7 +279,14 @@ class App:
         self.busy = "setting the radio up"
         self.publish(self.snapshot())
         chosen = self.settings.port
-        if not chosen:
+        # Start without a radio, whatever serial ports are present. The build
+        # machine checks the packaged app starts, and a Windows runner has a
+        # COM1 with nothing on it that a Mac or Linux runner does not: the same
+        # check passed on two platforms and hung on the third, depending on
+        # nothing but the hardware of the machine doing the building.
+        if os.environ.get("LORALINE_NO_RADIO"):
+            chosen = ""
+        elif not chosen:
             # Prefer something that already answered while we were looking, so
             # a second launch does not sit through the probe again.
             answered = [p["port"] for p in self.ports if p["answered"]]
