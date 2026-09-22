@@ -63,6 +63,7 @@ class Settings:
     band: str = ""
     port: str = ""            # blank means look for it every time
     configured: bool = False
+    theme: str = "paper"      # what the paper looks like; see themes.py
 
     @property
     def open_channel(self) -> bool:

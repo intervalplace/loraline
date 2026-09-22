@@ -24,7 +24,8 @@ import webbrowser
 from . import window as own_window
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import crypto, detect, face as faces, host as hosting, service, settings as store
+from . import crypto, detect, face as faces, host as hosting, service
+from . import settings as store, themes
 from . import __version__ as _version, build_id as _build
 from .client import Client
 from .crypto import GROUP, Identity, Keyring
@@ -139,6 +140,18 @@ class App:
                     self._listeners.remove(channel)
                 self.watchers = len(self._listeners)
 
+    def dressed(self, page: str) -> str:
+        """The page in the colours this person chose.
+
+        One table for the chat and for hearsay, because they are both paper
+        and there is no reason for them to disagree about what paper is.
+        """
+        name = themes.pick(getattr(self.settings, "theme", themes.DEFAULT))
+        return (page.replace("/*THEME*/", themes.variables(name) + ";")
+                    .replace("<html lang=\"en\">",
+                             f'<html lang="en" data-theme="{name}" '
+                             f'style="color-scheme:{themes.scheme(name)}">'))
+
     def page_for(self, path: str) -> str:
         """Whose page is this? Everything shares one address and one stream;
         only the drawing differs."""
@@ -159,7 +172,7 @@ class App:
                 self.note(f"{panel.title} could not draw its page: {exc}", "warn")
                 body = _sorry(panel.title, exc)
             break
-        return self.with_nav(body, route)
+        return self.dressed(self.with_nav(body, route))
 
     def with_nav(self, page: str, here: str) -> str:
         """Put the switcher at the top of whatever page this is.
@@ -420,6 +433,19 @@ class App:
             self.note(f"Your line is now: {said}" if said
                       else "Your line is cleared.", "gold" if said else "muted")
             self.publish(self.snapshot())
+        elif what == "theme":
+            # Kept beside the rest of the settings, so it is the same window
+            # tomorrow and the same in hearsay as in the chat.
+            #
+            # A name this build has never heard of is ignored rather than
+            # treated as the default, which would quietly undo the choice
+            # somebody had already made.
+            asked = str(order.get("theme") or "")
+            if asked not in themes.THEMES:
+                return
+            self.settings.theme = asked
+            store.save(self.settings)
+            self.publish(self.snapshot())
         elif what == "status" and self.client is not None:
             try:
                 picked = Status(order.get("status", "on"))
@@ -451,6 +477,7 @@ class App:
                                    "frames_foreign", 0),
             },
             "version": f"{_version} \u00b7 {_build()}",
+            "theme": themes.pick(getattr(self.settings, "theme", "")),
             "service": {
                 "autostart": self.autostart.on,
                 "how": self.autostart.describe(),
@@ -830,10 +857,9 @@ PAGE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>loraline</title>
 <style>
-:root{--paper:#f7f5f0;--panel:#eeebe3;--ink:#22201d;--soft:#5d5952;--faint:#8d8880;
-      --rule:#dcd7cc;--mark:#b01b62;--good:#2f7d4f;
-      --serif:ui-serif,Charter,Georgia,serif;
-      --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+:root{/*THEME*/--serif:ui-serif,Charter,Georgia,serif;
+      --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+      --good:#2f7d4f}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);
      font-size:16px;line-height:1.5}
@@ -912,6 +938,11 @@ form.say input{flex:1}
 .saying input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--rule);
   color:var(--ink);font:inherit;font-size:.82rem;padding:.25rem .4rem;border-radius:2px}
 .states{margin:0 0 .6rem;display:flex;flex-wrap:wrap;gap:.3rem}
+.skins{margin:.1rem 0 .7rem;display:flex;gap:.3rem}
+button.skin{width:20px;height:20px;padding:0;border-radius:50%;cursor:pointer;
+  border:1px solid;display:flex;align-items:center;justify-content:center}
+button.skin i{width:7px;height:7px;border-radius:50%;display:block}
+button.skin.is{outline:1.5px solid var(--mark);outline-offset:1.5px}
 button.state{background:none;border:1px solid transparent;color:var(--faint);
   font:inherit;font-size:.74rem;padding:.1rem .35rem;border-radius:2px;cursor:pointer}
 button.state:hover{color:var(--ink)}
@@ -950,6 +981,18 @@ canvas.face{width:34px;height:34px;image-rendering:pixelated;border:1px solid va
   .cols{flex-direction:column}
   .side{width:auto}
   .meta{text-align:left}
+}
+/* Side by side, the sidebar scrolls on its own rather than setting how tall
+   the page is.
+   It is a long column, and it used to push the conversation down with it, so
+   the box you type in sat below the fold and the window had to be dragged
+   bigger before you could say anything. Stacked, on a narrow window, the page
+   scrolling is the right behaviour and this does not apply. */
+@media(min-width:46.01rem){
+  html, body{height:100%}
+  .wrap{height:100%;min-height:0;padding-bottom:1rem;overflow:hidden}
+  .side{overflow-y:auto;overscroll-behavior:contain;padding-right:.3rem}
+  .talk{min-height:0}
 }
 @media(max-width:30rem){
   .wrap{padding:0 .6rem 2rem}
@@ -1015,6 +1058,16 @@ function setup(){
 }
 
 const STATUS = {on:'online', away:'away', busy:'busy', brb:'back in a bit'};
+/* Paper, ink and the one accent: enough to tell them apart at eight pixels,
+   which is all a swatch has to do. */
+const SWATCH = {
+  paper: ['#f7f5f0', '#b01b62', '#dcd7cc'],
+  night: ['#15171a', '#e3a857', '#2c3036'],
+  rose: ['#f1c9d6', '#5e2a6e', '#ddafbf'],
+  sea: ['#eef5f4', '#10766e', '#cfe0dd'],
+  dusk: ['#271d3a', '#f29478', '#3d3257'],
+};
+const THEMES = Object.keys(SWATCH);
 
 /* The box only appears while you are changing it. A field sitting there for
    ever, with the line you set showing nowhere, made setting it look exactly
@@ -1163,6 +1216,12 @@ function talking(){
            class="state ${me.status===s?'is':''}"
            onclick="send({do:'status', status:'${s}'})">${STATUS[s]}</button>`).join('')}
       </p>
+
+      <p class="skins">${THEMES.map(t => `<button type="button"
+         class="skin ${(state.theme||'paper')===t?'is':''}" title="${t}"
+         style="background:${SWATCH[t][0]};border-color:${SWATCH[t][2]}"
+         onclick="send({do:'theme', theme:'${t}'})"
+         ><i style="background:${SWATCH[t][1]}"></i></button>`).join('')}</p>
 
       <h3>room</h3>
       <p class="staying">

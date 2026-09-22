@@ -7,7 +7,7 @@
 # no way to tell from the window whether the code running was the code just
 # downloaded. The app prints this on startup and shows it at the foot of the
 # page.
-__version__ = "1.20"
+__version__ = "1.25"
 
 
 def build_id() -> str:
