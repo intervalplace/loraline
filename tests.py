@@ -1017,4 +1017,107 @@ with _mk.patch.object(sys, "platform", "darwin"):
     assert _svc.desktop_entry() == (None, None), "and nowhere else wants one"
 ok("Linux gets a menu entry and an icon file, which is where its icon lives")
 
+
+# ---------- the window opens big enough to be used ----------
+from loraline import window as _w
+
+# The coast is 720 by 476 and the switcher, channel warning, composer and log
+# sit around it: about 744 by 670. The window opened at 1080 by 720, which is
+# twenty pixels of headroom before the title bar takes them, so the shore
+# arrived cramped and everybody went straight to full screen.
+_wide, _tall = _w.WANTS
+assert _wide >= 744 + 40, f"too narrow for the coast: {_wide}"
+assert _tall >= 670 + 60, f"too short for the coast: {_tall}"
+assert _wide >= 52 * 16, "and the chat runs to 52rem before it stops growing"
+_opens = _w.fits()
+assert _opens[0] >= _w.FLOOR[0] and _opens[1] >= _w.FLOOR[1], _opens
+# And it cannot be dragged smaller than the layout needs: below 736 the chat
+# stacks, and below 744 the coast starts shrinking.
+assert _w.FLOOR[0] > 46 * 16, "the floor has to keep the chat side by side"
+assert _w.FLOOR[0] >= 720 + 24, "and the coast whole"
+assert _w.FLOOR[1] >= 520, "and leave room to type"
+ok(f"it opens at {_wide} by {_tall} and will not go below "
+   f"{_w.FLOOR[0]} by {_w.FLOOR[1]}")
+
+
+# ---------- the conversation is not pushed off the bottom ----------
+import re as _re5
+_css = max(_re5.findall(r"<style>(.*?)</style>",
+                        open("loraline/app.py", encoding="utf-8").read(), _re5.S),
+           key=len)
+assert _css.count("{") == _css.count("}"), "the stylesheet has to balance"
+# The sidebar is a long column and it used to set how tall the page was, so
+# the conversation matched it and the box you type in sat below the fold.
+assert "@media(min-width:46.01rem)" in _css
+_wide = _css[_css.index("@media(min-width:46.01rem)"):]
+_wide = _wide[:_wide.index("@media", 10)] if "@media" in _wide[10:] else _wide
+assert "overflow-y:auto" in _wide, "the sidebar has to scroll on its own"
+assert "height:100%" in _wide, "and the page has to stop growing with it"
+ok("side by side, the sidebar scrolls and the composer stays on screen")
+
+
+# ---------- themes ----------
+from loraline import themes as _th
+
+def _lum(colour):
+    r, g, b = (int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+def _contrast(a, b):
+    lo, hi = sorted((_lum(a), _lum(b)))
+    return (hi + 0.05) / (lo + 0.05)
+
+for _name in _th.names():
+    _paper, _panel, _ink, _soft, _faint, _rule, _mark = _th.THEMES[_name]
+    # Anybody can pick any of these, so none of them may be unreadable.
+    assert _contrast(_paper, _ink) >= 7, f"{_name}: ink on paper"
+    assert _contrast(_paper, _soft) >= 4.5, f"{_name}: soft on paper"
+    assert _contrast(_paper, _mark) >= 4.5, f"{_name}: the accent on paper"
+    assert (_lum(_paper) > 0.5) == (_name not in _th.DARK), f"{_name}: dark or not"
+ok(f"{len(_th.names())} themes, every one of them readable")
+
+def _lab(colour):
+    r, g, b = (int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    f = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = f(r), f(g), f(b)
+    x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047
+    y = r * 0.2126 + g * 0.7152 + b * 0.0722
+    z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883
+    t = lambda c: c ** (1 / 3) if c > 0.008856 else 7.787 * c + 16 / 116
+    return 116 * t(y) - 16, 500 * (t(x) - t(y)), 200 * (t(y) - t(z))
+
+def _apart(a, b):
+    return sum((p - q) ** 2 for p, q in zip(_lab(a), _lab(b))) ** 0.5
+
+# Five themes are only five choices if they look like five things. Paper and
+# rose were 3.7 apart in ground and 7.7 in accent, and night and dusk were
+# both near-black with a pink accent: two pairs that were one choice each.
+import itertools as _it
+for _a, _b in _it.combinations(_th.names(), 2):
+    _ground = _apart(_th.THEMES[_a][0], _th.THEMES[_b][0])
+    _accent = _apart(_th.THEMES[_a][6], _th.THEMES[_b][6])
+    assert _ground > 15 or _accent > 30, \
+        f"{_a} and {_b} are too alike: ground {_ground:.1f}, accent {_accent:.1f}"
+ok("and every pair differs plainly in its ground or its accent")
+
+# A name this build has never heard of is ignored rather than taken as the
+# default, which would quietly undo a choice somebody had already made.
+assert _th.pick("chartreuse") == _th.DEFAULT
+assert "--paper:" in _th.variables("night") and "--red:" in _th.variables("night")
+assert _th.scheme("night") == "dark" and _th.scheme("rose") == "light"
+ok("and an unknown one falls back without raising")
+
+# The creature faces are in the wire format, so a theme cannot touch them: two
+# people who are the same creature see the same picture whatever they chose.
+_paint = open("loraline/face.py", encoding="utf-8").read()
+assert "var(--" not in _paint, "a face must not read a theme"
+ok("and none of them reaches the faces, which belong to the wire")
+
+_js = open("loraline/app.py", encoding="utf-8").read()
+for _name, _row in _th.THEMES.items():
+    assert f"{_name}: ['{_row[0]}', '{_row[6]}'" in _js, \
+        f"the {_name} swatch does not match its theme"
+ok("and the swatches you pick from are the themes you get")
+
 print("\nALL PASS")
