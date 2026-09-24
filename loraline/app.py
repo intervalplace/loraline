@@ -1065,16 +1065,35 @@ function setup(){
 }
 
 const STATUS = {on:'online', away:'away', busy:'busy', brb:'back in a bit'};
-/* Paper, ink and the one accent: enough to tell them apart at eight pixels,
-   which is all a swatch has to do. */
-const SWATCH = {
-  paper: ['#f7f5f0', '#b01b62', '#dcd7cc'],
-  night: ['#15171a', '#e3a857', '#2c3036'],
-  rose: ['#f1c9d6', '#5e2a6e', '#ddafbf'],
-  sea: ['#eef5f4', '#10766e', '#cfe0dd'],
-  dusk: ['#271d3a', '#f29478', '#3d3257'],
+/* The same table the server has, so the page can change its own colours
+   without being served again.
+
+   The theme was written into the stylesheet when the page was built, so
+   picking one did nothing at all until you navigated away and came back. */
+const PALETTE = {
+  paper: ['#f7f5f0', '#eeebe3', '#22201d', '#5d5952', '#8d8880', '#dcd7cc', '#b01b62'],
+  night: ['#15171a', '#1e2125', '#e7e4de', '#a9a59d', '#7a766f', '#2c3036', '#e3a857'],
+  rose: ['#f1c9d6', '#eab9c9', '#2b1b21', '#65434f', '#8c6873', '#ddafbf', '#5e2a6e'],
+  sea: ['#eef5f4', '#dfecea', '#1a2524', '#4d605d', '#7c8f8c', '#cfe0dd', '#10766e'],
+  dusk: ['#271d3a', '#322748', '#ece6f5', '#b3a8c8', '#8a7fa3', '#3d3257', '#f29478'],
 };
-const THEMES = Object.keys(SWATCH);
+const FIELDS = ['paper','panel','ink','soft','faint','rule','mark'];
+const NIGHTLY = ['dusk', 'night'];
+const THEMES = Object.keys(PALETTE);
+const SWATCH = {};
+for(const [name, row] of Object.entries(PALETTE))
+  SWATCH[name] = [row[0], row[6], row[5]];
+
+let wearing = null;
+function wear(name){
+  if(!PALETTE[name] || name === wearing) return;
+  wearing = name;
+  const root = document.documentElement;
+  FIELDS.forEach((f, i) => root.style.setProperty('--' + f, PALETTE[name][i]));
+  root.style.setProperty('--red', PALETTE[name][6]);
+  root.setAttribute('data-theme', name);
+  root.style.colorScheme = NIGHTLY.includes(name) ? 'dark' : 'light';
+}
 
 /* The box only appears while you are changing it. A field sitting there for
    ever, with the line you set showing nowhere, made setting it look exactly
@@ -1401,6 +1420,9 @@ function keepTyping(fn){
 }
 
 function render(){
+  // Before anything is drawn, so a new theme lands on this frame rather than
+  // the next page.
+  wear(state.theme || 'paper');
   const meta = document.getElementById('meta');
   if(state.ready && state.me){
     meta.innerHTML = `${esc(state.me.nick)} (${state.me.address})` +
