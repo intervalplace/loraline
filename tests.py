@@ -1115,10 +1115,15 @@ assert "var(--" not in _paint, "a face must not read a theme"
 ok("and none of them reaches the faces, which belong to the wire")
 
 _js = open("loraline/app.py", encoding="utf-8").read()
+# The page carries the whole table, not a copy of three colours from it, so
+# it can change its own colours without being served again. Picking a theme
+# used to do nothing until you navigated away and came back.
 for _name, _row in _th.THEMES.items():
-    assert f"{_name}: ['{_row[0]}', '{_row[6]}'" in _js, \
-        f"the {_name} swatch does not match its theme"
-ok("and the swatches you pick from are the themes you get")
+    _line = "  %s: [%s]," % (_name, ", ".join(f"'{c}'" for c in _row))
+    assert _line in _js, f"the page's {_name} does not match the table"
+assert "function wear(name)" in _js and "wear(state.theme" in _js, \
+    "the page has to put the theme on when it draws"
+ok("and the page carries the same table, so picking one takes effect at once")
 
 
 # ---------- a dead serial port fails, rather than hanging ----------
